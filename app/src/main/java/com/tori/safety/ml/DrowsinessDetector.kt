@@ -78,8 +78,14 @@ class DrowsinessDetector(private val context: Context) : ImageAnalysis.Analyzer 
     @SuppressLint("UnsafeOptInUsageError")
     override fun analyze(imageProxy: ImageProxy) {
         if (!isInitialized) {
+            Log.w(TAG, "Analyzer called but detector not initialized")
             imageProxy.close()
             return
+        }
+        
+        // Log every 30 frames to avoid spam
+        if (System.currentTimeMillis() % 1000 < 50) {
+             Log.d(TAG, "Analyzing frame: ${imageProxy.width}x${imageProxy.height}")
         }
         
         val mediaImage = imageProxy.image

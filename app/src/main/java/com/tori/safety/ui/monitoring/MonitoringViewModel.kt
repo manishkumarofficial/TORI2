@@ -34,17 +34,22 @@ class MonitoringViewModel(private val context: Context) : ViewModel() {
     private var alertService: AlertService? = null
     private var isBound = false
     
+    private val _serviceConnected = MutableLiveData<Boolean>()
+    val serviceConnected: LiveData<Boolean> = _serviceConnected
+    
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
             val binder = service as AlertService.LocalBinder
             alertService = binder.getService()
             isBound = true
+            _serviceConnected.postValue(true)
             setupServiceObservers()
         }
 
         override fun onServiceDisconnected(arg0: ComponentName) {
             alertService = null
             isBound = false
+            _serviceConnected.postValue(false)
         }
     }
     
@@ -94,6 +99,10 @@ class MonitoringViewModel(private val context: Context) : ViewModel() {
     fun onSendSosClicked() {
         alertService?.dismissAlert()
         alertService?.sendManualSOS()
+    }
+
+    fun setPreviewSurface(surfaceProvider: androidx.camera.core.Preview.SurfaceProvider?) {
+        alertService?.setPreviewSurface(surfaceProvider)
     }
 
     override fun onCleared() {

@@ -7,12 +7,8 @@ import android.util.Log
 import android.view.View
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.google.common.util.concurrent.ListenableFuture
 import com.tori.safety.R
 import com.tori.safety.databinding.ActivityMonitoringBinding
 
@@ -25,8 +21,6 @@ class MonitoringActivity : AppCompatActivity() {
     private val viewModel: MonitoringViewModel by viewModels { 
         MonitoringViewModelFactory(this) 
     }
-
-    private lateinit var cameraProviderFuture: ListenableFuture<ProcessCameraProvider>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -106,38 +100,20 @@ class MonitoringActivity : AppCompatActivity() {
         viewModel.weatherInfo.observe(this) { weather ->
             binding.tvWeather.text = "${weather.temperature}°C, ${weather.condition}"
         }
+        
+        viewModel.serviceConnected.observe(this) { connected ->
+            if (connected) {
+                Log.d(TAG, "Service connected, setting preview surface")
+                viewModel.setPreviewSurface(binding.previewView.surfaceProvider)
+                viewModel.startMonitoring()
+            }
+        }
     }
 
     private fun startCamera() {
-        cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        cameraProviderFuture.addListener({
-            val cameraProvider = cameraProviderFuture.get()
-            bindPreview(cameraProvider)
-        }, ContextCompat.getMainExecutor(this))
-        
-        // Start monitoring service
+        // Camera is now managed by AlertService
+        // We just need to ensure permissions are granted and service is started
         viewModel.startMonitoring()
-    }
-
-    private fun bindPreview(cameraProvider: ProcessCameraProvider) {
-        val cameraSelector = CameraSelector.Builder()
-            .requireLensFacing(CameraSelector.LENS_FACING_FRONT)
-            .build()
-
-        val preview = Preview.Builder()
-            .build()
-            .also {
-                it.setSurfaceProvider(binding.previewView.surfaceProvider)
-            }
-
-        try {
-            // Bind Preview use case to the Activity lifecycle.
-            // We DO NOT call unbindAll() because that would unbind the Service's ImageAnalysis use case.
-            cameraProvider.bindToLifecycle(this, cameraSelector, preview)
-            
-        } catch(exc: Exception) {
-            Log.e(TAG, "Use case binding failed", exc)
-        }
     }
 
     private fun showAlert(title: String, message: String) {

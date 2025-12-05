@@ -93,6 +93,10 @@ class AlertService : LifecycleService(), SensorEventListener {
     private var detectionJob: Job? = null
     private var fatigueCheckJob: Job? = null
     
+    // Camera Use Cases
+    private var preview: androidx.camera.core.Preview? = null
+    private var imageAnalysis: ImageAnalysis? = null
+    
     // Sensor for accident detection
     private var sensorManager: SensorManager? = null
     private var accelerometer: Sensor? = null
@@ -214,6 +218,11 @@ class AlertService : LifecycleService(), SensorEventListener {
             .build()
     }
     
+    fun setPreviewSurface(surfaceProvider: androidx.camera.core.Preview.SurfaceProvider?) {
+        android.util.Log.d("AlertService", "Setting preview surface: $surfaceProvider")
+        preview?.setSurfaceProvider(surfaceProvider)
+    }
+    
     fun startMonitoring() {
         if (isMonitoring) return
         isMonitoring = true
@@ -252,31 +261,37 @@ class AlertService : LifecycleService(), SensorEventListener {
     }
     
     private fun startCameraAnalysis() {
+        android.util.Log.d("AlertService", "Starting camera analysis")
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
+            android.util.Log.d("AlertService", "Camera provider future listener called")
             val cameraProvider = cameraProviderFuture.get()
             
-            val imageAnalysis = ImageAnalysis.Builder()
+            // Initialize Preview
+            preview = androidx.camera.core.Preview.Builder()
+                .build()
+            
+            // Initialize Analysis
+            imageAnalysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
             
-            imageAnalysis.setAnalyzer(cameraExecutor, drowsinessDetector)
-            
-            // Unbind only analysis to avoid conflict if activity bound it? 
-            // Actually, we want to bind it to the Service lifecycle.
-            // If Activity is also bound, CameraX handles multiple use cases.
-            // But ImageAnalysis can only be bound once? No, multiple use cases can be bound.
-            // However, we need to be careful about lifecycle owners.
+            imageAnalysis?.setAnalyzer(cameraExecutor, drowsinessDetector)
             
             try {
-                // We don't unbind all because Activity might have Preview.
-                // But we need to make sure Analysis is bound to THIS service.
+                android.util.Log.d("AlertService", "Unbinding all use cases before rebinding")
+                cameraProvider.unbindAll() // Ensure we have a clean slate
+                
+                android.util.Log.d("AlertService", "Binding camera to lifecycle")
                 cameraProvider.bindToLifecycle(
                     this, 
                     androidx.camera.core.CameraSelector.DEFAULT_FRONT_CAMERA,
+                    preview,
                     imageAnalysis
                 )
+                android.util.Log.d("AlertService", "Camera bound successfully")
             } catch (e: Exception) {
+                android.util.Log.e("AlertService", "Error binding camera", e)
                 e.printStackTrace()
             }
             
@@ -304,10 +319,15 @@ class AlertService : LifecycleService(), SensorEventListener {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
-            // We can't easily unbind just one use case without reference, 
-            // but since we bound it to 'this', it should auto-unbind when service is destroyed.
-            // However, we want to stop it explicitly when monitoring stops.
-            // For now, we rely on LifecycleService.
+            // We rely on LifecycleService to unbind when service is destroyed,
+            // but we should probably unbind explicitly if we want to stop camera while service is running.
+            // For now, we assume stopMonitoring is called when service is destroyed or user stops it.
+            // If user stops monitoring but keeps service, we should unbind.
+            try {
+                cameraProvider.unbindAll()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }, ContextCompat.getMainExecutor(this))
     }
     
