@@ -1,0 +1,314 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout 
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black"
+    tools:context=".ui.monitoring.MonitoringActivity">
+
+    <!-- Camera Preview -->
+    <androidx.camera.view.PreviewView
+        android:id="@+id/preview_view"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:scaleType="fillCenter" />
+
+    <!-- Overlay Container -->
+    <LinearLayout
+        android:id="@+id/layout_overlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:orientation="vertical"
+        android:background="@color/overlay_dark"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Top Status Bar -->
+        <LinearLayout
+            android:id="@+id/layout_top_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:gravity="center_vertical">
+
+            <!-- Back Button -->
+            <ImageButton
+                android:id="@+id/btn_back"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@android:drawable/ic_menu_revert"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/action_back"
+                android:tint="@color/white" />
+
+            <!-- Status Pill -->
+            <TextView
+                android:id="@+id/tv_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/status_monitoring_active"
+                android:textAppearance="@style/TextAppearance.TORI.Caption"
+                android:textColor="@color/white"
+                android:background="@drawable/status_pill_background"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:layout_marginStart="16dp" />
+
+            <!-- Battery Indicator -->
+            <TextView
+                android:id="@+id/tv_battery"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔋 85%"
+                android:textAppearance="@style/TextAppearance.TORI.Caption"
+                android:textColor="@color/white"
+                android:layout_marginStart="16dp" />
+
+        </LinearLayout>
+
+        <!-- Spacer to push content to bottom -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <!-- Bottom Controls -->
+        <LinearLayout
+            android:id="@+id/layout_bottom_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <!-- EAR Display -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="EAR Value:"
+                    android:textAppearance="@style/TextAppearance.TORI.Body1"
+                    android:textColor="@color/white" />
+
+                <TextView
+                    android:id="@+id/tv_ear_value"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0.000"
+                    android:textAppearance="@style/TextAppearance.TORI.Body1"
+                    android:textColor="@color/safety_yellow"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Fatigue Risk Display -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Fatigue Risk:"
+                    android:textAppearance="@style/TextAppearance.TORI.Body1"
+                    android:textColor="@color/white" />
+
+                <TextView
+                    android:id="@+id/tv_fatigue_risk"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0%"
+                    android:textAppearance="@style/TextAppearance.TORI.Body1"
+                    android:textColor="@color/safety_safe"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Weather Display -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Weather:"
+                    android:textAppearance="@style/TextAppearance.TORI.Body1"
+                    android:textColor="@color/white" />
+
+                <TextView
+                    android:id="@+id/tv_weather"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Loading..."
+                    android:textAppearance="@style/TextAppearance.TORI.Body1"
+                    android:textColor="@color/white"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Detection Status -->
+            <TextView
+                android:id="@+id/tv_detection_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/monitoring_status_no_face"
+                android:textAppearance="@style/TextAppearance.TORI.Body2"
+                android:textColor="@color/text_tertiary"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Action Buttons -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <!-- Emergency SOS Button -->
+                <Button
+                    android:id="@+id/btn_emergency_sos"
+                    android:layout_width="120dp"
+                    android:layout_height="120dp"
+                    android:text="@string/btn_emergency_sos"
+                    android:textAppearance="@style/Theme.TORI.Button.SOS"
+                    android:background="@drawable/button_sos_background"
+                    android:layout_marginEnd="16dp" />
+
+                <!-- Stop Monitoring Button -->
+                <Button
+                    android:id="@+id/btn_stop_monitoring"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/btn_stop_monitoring"
+                    android:textAppearance="@style/Theme.TORI.Button.Secondary" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Alert Overlay (Initially Hidden) -->
+    <LinearLayout
+        android:id="@+id/layout_alert_overlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:orientation="vertical"
+        android:background="@color/overlay_dark"
+        android:gravity="center"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Alert Icon -->
+        <TextView
+            android:id="@+id/tv_alert_icon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚠️"
+            android:textSize="72sp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Alert Title -->
+        <TextView
+            android:id="@+id/tv_alert_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/alert_drowsiness_title"
+            android:textAppearance="@style/TextAppearance.TORI.Headline2"
+            android:textColor="@color/alert_red"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <!-- Alert Message -->
+        <TextView
+            android:id="@+id/tv_alert_message"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="@string/alert_drowsiness_message"
+            android:textAppearance="@style/TextAppearance.TORI.Body1"
+            android:textColor="@color/white"
+            android:textAlignment="center"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Countdown Timer -->
+        <TextView
+            android:id="@+id/tv_countdown"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Response in 10 seconds"
+            android:textAppearance="@style/TextAppearance.TORI.Body2"
+            android:textColor="@color/safety_yellow"
+            android:layout_marginBottom="32dp" />
+
+        <!-- Alert Action Buttons -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp">
+
+            <!-- I'm OK Button -->
+            <Button
+                android:id="@+id/btn_im_ok"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_im_ok"
+                android:textAppearance="@style/Theme.TORI.Button.Primary"
+                android:background="@drawable/button_primary_background"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Take Break Button -->
+            <Button
+                android:id="@+id/btn_take_break"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_take_break"
+                android:textAppearance="@style/Theme.TORI.Button.Secondary"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Send SOS Button -->
+            <Button
+                android:id="@+id/btn_send_sos"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_send_sos"
+                android:textAppearance="@style/Theme.TORI.Button.SOS"
+                android:background="@drawable/button_sos_background" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

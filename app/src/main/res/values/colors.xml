@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- TOR-I 2.0 Premium Palette -->
+    
+    <!-- Backgrounds (Deep Space / Glassmorphism) -->
+    <color name="background_primary">#050B14</color> <!-- Deepest Blue/Black -->
+    <color name="background_secondary">#0F172A</color>
+    <color name="background_tertiary">#1E293B</color>
+    <color name="glass_surface">#1AFFFFFF</color> <!-- 10% White for Glass effect -->
+    <color name="glass_border">#33FFFFFF</color> <!-- 20% White for borders -->
+    
+    <!-- Neon Accents (Cyberpunk/Futuristic) -->
+    <color name="neon_cyan">#00F0FF</color>
+    <color name="neon_cyan_dim">#008F99</color>
+    <color name="neon_purple">#B026FF</color>
+    <color name="neon_green">#39FF14</color>
+    <color name="neon_orange">#FF5F1F</color>
+    
+    <!-- Safety Status Colors -->
+    <color name="safety_safe">#39FF14</color>
+    <color name="safety_warning">#FFB020</color>
+    <color name="safety_critical">#FF003C</color> <!-- Cyberpunk Red -->
+    
+    <!-- HUD Colors (High Contrast) -->
+    <color name="hud_background">#000000</color>
+    <color name="hud_text">#00FF00</color> <!-- Classic HUD Green -->
+    <color name="hud_text_secondary">#008800</color>
+    
+    <!-- Text Colors -->
+    <color name="text_primary">#F8FAFC</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="text_tertiary">#64748B</color>
+    <color name="text_disabled">#475569</color>
+    <color name="text_on_neon">#000000</color>
+    
+    <!-- Gradients -->
+    <color name="gradient_start">#020617</color>
+    <color name="gradient_end">#0F172A</color>
+    
+    <!-- Utility -->
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="transparent">#00000000</color>
+    <color name="overlay_dark">#CC000000</color>
+    <color name="overlay_light">#20FFFFFF</color>
+    <color name="shadow_color">#40000000</color>
+    
+    <!-- Legacy/Missing Colors -->
+    <color name="safety_yellow">#FFB020</color>
+    <color name="safety_yellow_dark">#CC8C19</color>
+    <color name="alert_red">#FF003C</color>
+    <color name="alert_red_dark">#CC0030</color>
+    <color name="surface_secondary">#0F172A</color>
+    <color name="surface_elevated">#1E293B</color>
+    <color name="surface_primary">#0F172A</color>
+    <color name="gradient_mid">#0A1120</color>
+    <color name="monitoring_green">#39FF14</color>
+</resources>

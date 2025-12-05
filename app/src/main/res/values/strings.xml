@@ -1,0 +1,154 @@
+<resources>
+    <string name="app_name">TOR-I</string>
+    <string name="app_tagline">Intelligent Safety Companion</string>
+    
+    <!-- Navigation -->
+    <string name="nav_monitoring">Monitoring</string>
+    <string name="nav_settings">Settings</string>
+    <string name="nav_trip_log">Trip Log</string>
+    <string name="nav_contacts">Contacts</string>
+    
+    <!-- Splash Screen -->
+    <string name="splash_title">TOR-I</string>
+    <string name="splash_subtitle">Intelligent Safety Companion</string>
+    <string name="splash_description">Preventing driver accidents through AI-powered drowsiness detection</string>
+    
+    <!-- Main Screen -->
+    <string name="main_title">Safety Monitoring</string>
+    <string name="main_subtitle">Start monitoring to detect drowsiness</string>
+    <string name="btn_start_monitoring">Start Monitoring</string>
+    <string name="btn_start_copilot">Start Co-Pilot</string>
+    <string name="btn_hud_mode">HUD Mode</string>
+    <string name="btn_emergency_sos">Emergency SOS</string>
+    <string name="btn_settings">Settings</string>
+    <string name="btn_trip_log">Trip Log</string>
+    
+    <!-- Monitoring Screen -->
+    <string name="monitoring_status">Monitoring Active</string>
+    <string name="monitoring_ear_value">EAR: %.3f</string>
+    <string name="monitoring_status_normal">Normal</string>
+    <string name="monitoring_status_drowsy">Drowsy - ALERT!</string>
+    <string name="monitoring_status_no_face">No Face Detected</string>
+    <string name="btn_stop_monitoring">Stop Monitoring</string>
+    <string name="btn_pause_monitoring">Pause</string>
+    <string name="btn_resume_monitoring">Resume</string>
+    
+    <!-- Alert Messages -->
+    <string name="alert_drowsiness_title">Drowsiness Detected</string>
+    <string name="alert_drowsiness_message">You look sleepy. Please stop and rest.</string>
+    <string name="alert_drowsiness_message_tamil">அலர்ட் — நீங்கள் தூங்கப்போகிறீர்கள். தயவுசெய்து ஓய்வெடுக்கவும்.</string>
+    <string name="alert_countdown">Response in %d seconds</string>
+    <string name="btn_im_ok">I\'m OK</string>
+    <string name="btn_take_break">Take Break</string>
+    <string name="btn_send_sos">Send SOS</string>
+    
+    <!-- SOS -->
+    <string name="sos_title">Emergency SOS</string>
+    <string name="sos_message">SOS sent to emergency contacts with your location</string>
+    <string name="sos_manual_title">Manual SOS</string>
+    <string name="sos_manual_message">Send emergency message to contacts?</string>
+    <string name="btn_send_sos_manual">Send SOS</string>
+    <string name="btn_cancel_sos">Cancel</string>
+    
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_general">General</string>
+    <string name="settings_detection">Detection</string>
+    <string name="settings_alerts">Alerts</string>
+    <string name="settings_emergency">Emergency</string>
+    
+    <!-- Detection Settings -->
+    <string name="settings_ear_threshold">EAR Threshold</string>
+    <string name="settings_ear_threshold_description">Lower values detect drowsiness earlier</string>
+    <string name="settings_consecutive_frames">Consecutive Frames</string>
+    <string name="settings_consecutive_frames_description">Frames needed to trigger alert</string>
+    <string name="settings_smoothing_factor">Smoothing Factor</string>
+    <string name="settings_smoothing_factor_description">Reduces false positives</string>
+    
+    <!-- Alert Settings -->
+    <string name="settings_alert_volume">Alert Volume</string>
+    <string name="settings_vibration_enabled">Vibration</string>
+    <string name="settings_tts_enabled">Voice Alerts</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_tamil">Tamil</string>
+    
+    <!-- General Settings -->
+    <string name="settings_low_power_mode">Low Power Mode</string>
+    <string name="settings_low_power_description">Reduces camera frame rate to save battery</string>
+    <string name="settings_background_monitoring">Background Monitoring</string>
+    <string name="settings_background_description">Continue monitoring when app is minimized</string>
+    <string name="settings_auto_start">Auto-start on Boot</string>
+    <string name="settings_auto_start_description">Start monitoring automatically when device boots</string>
+    
+    <!-- Emergency Contacts -->
+    <string name="contacts_title">Emergency Contacts</string>
+    <string name="contacts_add">Add Contact</string>
+    <string name="contacts_edit">Edit Contact</string>
+    <string name="contacts_name">Name</string>
+    <string name="contacts_phone">Phone Number</string>
+    <string name="contacts_relationship">Relationship</string>
+    <string name="btn_save_contact">Save Contact</string>
+    <string name="btn_delete_contact">Delete Contact</string>
+    <string name="contact_name_hint">Enter Name</string>
+    <string name="contact_phone_hint">Enter Phone Number</string>
+    
+    <!-- Trip Log -->
+    <string name="trip_log_title">Trip Log</string>
+    <string name="trip_log_empty">No trips recorded yet</string>
+    <string name="trip_log_start_time">Start Time</string>
+    <string name="trip_log_duration">Duration</string>
+    <string name="trip_log_alerts">Alerts</string>
+    <string name="trip_log_sos_count">SOS Events</string>
+    <string name="btn_export_log">Export Log</string>
+    <string name="btn_clear_log">Clear Log</string>
+    
+    <!-- Permissions -->
+    <string name="permission_camera_title">Camera Permission</string>
+    <string name="permission_camera_message">TOR-I needs camera access to detect facial landmarks for drowsiness monitoring.</string>
+    <string name="permission_location_title">Location Permission</string>
+    <string name="permission_location_message">TOR-I needs location access to send GPS coordinates in SOS messages.</string>
+    <string name="permission_sms_title">SMS Permission</string>
+    <string name="permission_sms_message">TOR-I needs SMS access to send emergency messages to contacts.</string>
+    <string name="permission_vibration_title">Vibration Permission</string>
+    <string name="permission_vibration_message">TOR-I needs vibration access to provide tactile alerts.</string>
+    
+    <!-- Coaching Tips -->
+    <string name="coaching_tip_1">Take a 15-minute break and get fresh air</string>
+    <string name="coaching_tip_2">Drink water to stay hydrated</string>
+    <string name="coaching_tip_3">Do some light stretching exercises</string>
+    <string name="coaching_tip_4">Listen to upbeat music to stay alert</string>
+    <string name="coaching_tip_5">Chew gum or have a light snack</string>
+    
+    <!-- Status Messages -->
+    <string name="status_monitoring_active">Monitoring Active</string>
+    <string name="status_monitoring_paused">Monitoring Paused</string>
+    <string name="status_monitoring_stopped">Monitoring Stopped</string>
+    <string name="status_camera_error">Camera Error</string>
+    <string name="status_permission_denied">Permission Denied</string>
+    <string name="status_location_unavailable">Location Unavailable</string>
+    
+    <!-- Common Actions -->
+    <string name="action_retry">Retry</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_ok">OK</string>
+    <string name="action_yes">Yes</string>
+    <string name="action_no">No</string>
+    <string name="action_save">Save</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_back">Back</string>
+    
+    <!-- Error Messages -->
+    <string name="error_camera_not_available">Camera not available</string>
+    <string name="error_location_not_available">Location not available</string>
+    <string name="error_sms_not_available">SMS not available</string>
+    <string name="error_network_unavailable">Network unavailable</string>
+    <string name="error_unknown">Unknown error occurred</string>
+    
+    <!-- Success Messages -->
+    <string name="success_sos_sent">SOS sent successfully</string>
+    <string name="success_contact_saved">Contact saved successfully</string>
+    <string name="success_settings_saved">Settings saved successfully</string>
+    <string name="success_log_exported">Trip log exported successfully</string>
+</resources>
