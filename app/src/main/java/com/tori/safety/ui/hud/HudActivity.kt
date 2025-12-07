@@ -16,6 +16,9 @@ class HudActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         setupClickListeners()
+        
+        // Ensure permissions are granted before this activity is launched, 
+        // or handle them here. VoiceManager needs RECORD_AUDIO.
     }
 
     private fun setupClickListeners() {

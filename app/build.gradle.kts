@@ -96,6 +96,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
     implementation("androidx.preference:preference-ktx:1.2.1")
+
+    // AI & Networking
+    implementation(libs.google.generativeai)
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.gson)
+    implementation(libs.okhttp)
+    implementation(libs.gson)
     
     // Testing
     testImplementation(libs.junit)
