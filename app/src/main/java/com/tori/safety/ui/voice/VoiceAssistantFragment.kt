@@ -21,7 +21,6 @@ class VoiceAssistantFragment : Fragment() {
     private lateinit var transcriptText: TextView
     
     // Dependencies (Should be injected, but creating here for simplicity)
-    private lateinit var voiceManager: VoiceManager
     private lateinit var tts: ToriTTS
     private lateinit var geminiHelper: GeminiHelper
     private lateinit var commandProcessor: CommandProcessor
@@ -33,7 +32,9 @@ class VoiceAssistantFragment : Fragment() {
         // API Key should be securely stored. Using a placeholder or retrieving from BuildConfig
         val apiKey = "AIzaSyAG9VdNAUhmY3b-qmrCQ-hCfXcoXjsHrtE" // TODO: Replace with actual key or mechanism
         
-        voiceManager = VoiceManager(context)
+        // VoiceManager is now a Singleton, ensure init
+        VoiceManager.init(context)
+        
         tts = ToriTTS(context)
         geminiHelper = GeminiHelper(apiKey)
         commandProcessor = CommandProcessor(context, tts, geminiHelper)
@@ -44,7 +45,6 @@ class VoiceAssistantFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View? {
         // Programmatically creating view for simplicity, or inflate layout
-        // Let's assume we have a layout or create a simple one
         return inflater.inflate(R.layout.fragment_voice_assistant, container, false)
     }
 
@@ -58,53 +58,61 @@ class VoiceAssistantFragment : Fragment() {
         setupVoiceListeners()
         
         // Start listening for Wake Word
-        voiceManager.startListening()
+        VoiceManager.startWakeWordDetection()
     }
 
     private fun setupVoiceListeners() {
         // Observe Voice State
         lifecycleScope.launch {
-            voiceManager.voiceState.collect { state ->
+            VoiceManager.voiceState.collect { state ->
                 when (state) {
                     is VoiceManager.VoiceState.Idle -> {
+                        visualizer.visibility = View.GONE
                         visualizer.setState(ToriVisualizerView.State.IDLE)
-                        statusText.text = "Say 'Hey Tori'"
+                        statusText.visibility = View.GONE
                     }
                     is VoiceManager.VoiceState.Listening -> {
-                        visualizer.setState(ToriVisualizerView.State.LISTENING)
+                        visualizer.visibility = View.VISIBLE
+                        statusText.visibility = View.VISIBLE
                         statusText.text = "Listening..."
+                        visualizer.setState(ToriVisualizerView.State.LISTENING)
                     }
                     is VoiceManager.VoiceState.Processing -> {
-                        visualizer.setState(ToriVisualizerView.State.THINKING)
+                        visualizer.visibility = View.VISIBLE
                         statusText.text = "Thinking..."
+                        visualizer.setState(ToriVisualizerView.State.THINKING)
                     }
                     is VoiceManager.VoiceState.Speaking -> {
-                        visualizer.setState(ToriVisualizerView.State.SPEAKING)
+                        visualizer.visibility = View.VISIBLE
                         statusText.text = "Speaking..."
+                        visualizer.setState(ToriVisualizerView.State.SPEAKING)
                     }
                     is VoiceManager.VoiceState.Error -> {
+                        // Error is transient, maybe flash then hide?
+                        statusText.text = state.message
                         visualizer.setState(ToriVisualizerView.State.IDLE)
-                        statusText.text = "Error: ${state.message}"
+                        // delayed hide?
                     }
                 }
             }
         }
 
         // Handle recognized commands
-        voiceManager.onCommandRecognized = { text ->
-            transcriptText.text = text
-            commandProcessor.process(text)
-        }
+        // VoiceManager callbacks are now handled by CommandProcessor (which is created here)
+        // We just need to ensure CommandProcessor is initialized.
         
-        // Observe Processor State
+        // Observe Processor State for UI updates
         lifecycleScope.launch {
             commandProcessor.processorState.collect { state ->
                 when (state) {
                     is CommandProcessor.ProcessorState.Result -> {
                         transcriptText.text = state.reply
-                        // Resume wake word mode after a delay?
-                        voiceManager.setWakeWordMode(true)
-                        voiceManager.startListening()
+                    }
+                    is CommandProcessor.ProcessorState.Processing -> {
+                         transcriptText.text = state.text
+                    }
+                    is CommandProcessor.ProcessorState.Error -> {
+                         transcriptText.text = state.error
                     }
                     else -> {}
                 }
@@ -114,7 +122,9 @@ class VoiceAssistantFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        voiceManager.destroy()
+        // Don't fully destroy VoiceManager if we want it global, 
+        // but this Fragment is part of the overlay which might be Destroyed.
+        // Actually, for BaseActivity, the Fragment might be persistent or recreated.
         tts.shutdown()
     }
 }

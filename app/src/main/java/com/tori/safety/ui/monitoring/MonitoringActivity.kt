@@ -6,16 +6,16 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.tori.safety.R
 import com.tori.safety.databinding.ActivityMonitoringBinding
+import com.tori.safety.ui.base.ToriBaseActivity
+import com.tori.safety.R
 
 /**
  * Monitoring activity for real-time drowsiness detection
  */
-class MonitoringActivity : AppCompatActivity() {
+class MonitoringActivity : ToriBaseActivity() {
 
     private lateinit var binding: ActivityMonitoringBinding
     private val viewModel: MonitoringViewModel by viewModels { 

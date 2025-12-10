@@ -13,39 +13,42 @@ class GeminiHelper(private val apiKey: String) {
     )
 
     // Maintain a simple chat history
-    private val chatHistory = mutableListOf<Pair<String, String>>()
+    private val chatHistory = mutableListOf<String>()
+
+    init {
+        // Seed history
+        chatHistory.add("System: You are Tori, a helpful and friendly driving assistant. Your persona is like Iron Man's JARVIS or F.R.I.D.A.Y. Keep responses concise and natural.")
+    }
 
     suspend fun processCommand(userText: String): GeminiResponse {
         return withContext(Dispatchers.IO) {
-            val prompt = buildPrompt(userText)
+            chatHistory.add("User: $userText")
+            
+            // Limit history to last 10 turns
+            if (chatHistory.size > 20) {
+                 chatHistory.removeAt(1) // Keep system prompt at 0
+            }
+
+            val prompt = buildPrompt()
             try {
                 val response = generativeModel.generateContent(prompt)
                 val responseText = response.text ?: ""
+                
+                chatHistory.add("Tori: $responseText")
                 
                 // Parse the response to extract intent and reply
                 // We expect Gemini to return a specific format, e.g., JSON or a structured string
                 parseResponse(responseText)
             } catch (e: Exception) {
+                // Remove prompt if failed
+                if (chatHistory.last().startsWith("User:")) chatHistory.removeLast()
                 GeminiResponse(IntentType.UNKNOWN, "Sorry, I'm having trouble connecting to my brain right now.", null)
             }
         }
     }
 
-    private fun buildPrompt(userText: String): String {
-        // Construct a prompt that instructs Gemini to act as Tori
-        // and return a structured response.
-        return """
-            You are Tori, a helpful and friendly driving assistant.
-            Your persona is like Iron Man's JARVIS or F.R.I.D.A.Y.
-            Keep responses concise (suitable for driving) but friendly.
-            
-            Analyze the following user command and respond in this format:
-            INTENT: [NAVIGATE | SEARCH | WEATHER | TRAFFIC | CHAT | UNKNOWN]
-            DATA: [Extraction of location, query, etc. or NULL]
-            REPLY: [Your conversational response to the user]
-            
-            User Command: "$userText"
-        """.trimIndent()
+    private fun buildPrompt(): String {
+        return chatHistory.joinToString("\n") + "\n\nAnalyze the last user command and respond in this format:\nINTENT: [NAVIGATE | SEARCH | WEATHER | TRAFFIC | CHAT | UNKNOWN]\nDATA: [Extraction or NULL]\nREPLY: [Your conversational response]"
     }
 
     private fun parseResponse(text: String): GeminiResponse {
@@ -81,6 +84,25 @@ class GeminiHelper(private val apiKey: String) {
         }
 
         return GeminiResponse(intent, reply, data)
+    }
+
+    // Proactive Companion Mode
+    suspend fun generateProactivePrompt(): String {
+        return withContext(Dispatchers.IO) {
+            val prompt = """
+                You are Tori, a driving companion. The driver has been quiet for a while.
+                Generate a short, friendly, and engaging question or comment to keep them awake and attentive.
+                Examples: "It's quiet. How are you feeling?", "Do you want to play a trivia game to stay alert?", "Look at the road ahead, traffic seems clear."
+                Return JUST the text of the message.
+            """.trimIndent()
+            
+            try {
+                val response = generativeModel.generateContent(prompt)
+                response.text ?: "Hey, just checking in. You good?"
+            } catch (e: Exception) {
+                "Stay alert, Manish."
+            }
+        }
     }
 
     enum class IntentType {

@@ -3,7 +3,8 @@ package com.tori.safety.ui.settings
 import android.content.Intent
 import android.os.Bundle
 import android.widget.SeekBar
-import androidx.appcompat.app.AppCompatActivity
+import com.tori.safety.ui.base.ToriBaseActivity
+import com.tori.safety.R
 import com.tori.safety.data.model.DetectionSettings
 import com.tori.safety.data.model.Language
 import com.tori.safety.data.repository.SettingsRepository
@@ -13,7 +14,7 @@ import com.tori.safety.ui.contacts.ContactsActivity
 /**
  * Activity for app settings
  */
-class SettingsActivity : AppCompatActivity() {
+class SettingsActivity : ToriBaseActivity() {
     
     private lateinit var binding: ActivitySettingsBinding
     private lateinit var repository: SettingsRepository

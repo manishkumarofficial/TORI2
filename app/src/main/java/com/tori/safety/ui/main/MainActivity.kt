@@ -3,7 +3,7 @@ package com.tori.safety.ui.main
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
+import com.tori.safety.ui.base.ToriBaseActivity
 import com.tori.safety.R
 import com.tori.safety.databinding.ActivityMainBinding
 import com.tori.safety.ui.contacts.ContactsActivity
@@ -14,7 +14,7 @@ import com.tori.safety.ui.triplog.TripLogActivity
 /**
  * Main activity - Dashboard for TOR-I app
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : ToriBaseActivity() {
     
     private lateinit var binding: ActivityMainBinding
     
