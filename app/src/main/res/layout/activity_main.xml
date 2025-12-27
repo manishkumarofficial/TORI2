@@ -190,4 +190,39 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Voice Assistant (Tori) -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/voice_assistant_container"
+        android:layout_width="120dp"
+        android:layout_height="120dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="24dp"
+        android:background="@drawable/bg_glass_card"
+        android:padding="16dp"
+        app:layout_constraintBottom_toTopOf="@id/btn_emergency_sos"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <com.tori.safety.voice.VoiceAssistantView
+            android:id="@+id/voice_assistant_view"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+        <TextView
+            android:id="@+id/tv_voice_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Tori"
+            android:textSize="12sp"
+            android:textColor="@color/neon_cyan"
+            android:layout_marginTop="4dp"
+            app:layout_constraintTop_toBottomOf="@id/voice_assistant_view"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
 </androidx.constraintlayout.widget.ConstraintLayout>
