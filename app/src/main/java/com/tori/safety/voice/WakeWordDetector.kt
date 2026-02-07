@@ -82,7 +82,14 @@ class WakeWordDetector(private val context: Context) {
     fun stopListening() {
         Log.d(TAG, "Stopping wake word detection...")
         isListening = false
-        audioRecord?.stop()
+        try {
+            val record = audioRecord
+            if (record != null && record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                record.stop()
+            }
+        } catch (_: IllegalStateException) {
+            // Ignore
+        }
         energyHistory.clear()
         resetDetectionState()
     }

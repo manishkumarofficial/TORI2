@@ -119,6 +119,10 @@ class AlertService : LifecycleService(), SensorEventListener {
     companion object {
         private const val CHANNEL_ID = "AlertServiceChannel"
         private const val NOTIFICATION_ID = 1
+
+        const val ACTION_START_MONITORING = "com.tori.safety.action.START_MONITORING"
+        const val ACTION_STOP_MONITORING = "com.tori.safety.action.STOP_MONITORING"
+        const val ACTION_SEND_MANUAL_SOS = "com.tori.safety.action.SEND_MANUAL_SOS"
     }
     
     override fun onBind(intent: Intent): IBinder {
@@ -192,6 +196,18 @@ class AlertService : LifecycleService(), SensorEventListener {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+
+        when (intent?.action) {
+            ACTION_START_MONITORING -> {
+                startMonitoring()
+            }
+            ACTION_STOP_MONITORING -> {
+                stopMonitoring()
+            }
+            ACTION_SEND_MANUAL_SOS -> {
+                sendManualSOS()
+            }
         }
         
         return START_STICKY
