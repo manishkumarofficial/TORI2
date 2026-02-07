@@ -4,6 +4,19 @@ plugins {
     alias(libs.plugins.kotlin.kapt)
 }
 
+import java.util.Properties
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.inputStream())
+} else {
+    localPropertiesFile.writer().use {
+        it.write("# Add your Gemini API key here\nGEMINI_API_KEY=\"YOUR_API_KEY_HERE\"\n")
+    }
+    localProperties.load(localPropertiesFile.inputStream())
+}
+
 android {
     namespace = "com.tori.safety"
     compileSdk = 35
@@ -20,6 +33,10 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        val geminiApiKeyRaw = localProperties.getProperty("GEMINI_API_KEY") ?: ""
+        val geminiApiKey = geminiApiKeyRaw.trim().removeSurrounding("\"")
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
     }
 
     buildTypes {
@@ -42,6 +59,7 @@ android {
     }
     
     buildFeatures {
+        buildConfig = true
         viewBinding = true
     }
     

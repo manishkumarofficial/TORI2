@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.content
+import com.tori.safety.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -16,14 +17,19 @@ class GeminiProcessor(private val context: Context) {
     private lateinit var generativeModel: GenerativeModel
     private var isInitialized = false
     
-    // You need to add your Gemini API key here
-    // Get your API key from: https://makersuite.google.com/app/apikey
-    private val apiKey = "AIzaSyAG9VdNAUhmY3b-qmrCQ-hCfXcoXjsHrtE" // Your actual API key
+    // API key from BuildConfig (set in build.gradle.kts via local.properties)
+    private val apiKey = BuildConfig.GEMINI_API_KEY
     
     suspend fun initialize() {
         Log.d(TAG, "Initializing Gemini AI processor...")
         
         try {
+            if (apiKey.isEmpty()) {
+                Log.e(TAG, "Gemini API key is missing. Fallback mode enabled.")
+                isInitialized = true // Allow fallback mode
+                return
+            }
+            
             generativeModel = GenerativeModel(
                 modelName = "gemini-1.5-flash",
                 apiKey = apiKey,

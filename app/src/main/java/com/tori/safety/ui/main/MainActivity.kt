@@ -3,15 +3,18 @@ package com.tori.safety.ui.main
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.tori.safety.ui.base.ToriBaseActivity
 import com.tori.safety.R
 import com.tori.safety.databinding.ActivityMainBinding
+import com.tori.safety.service.AlertService
 import com.tori.safety.ui.contacts.ContactsActivity
 import com.tori.safety.ui.monitoring.MonitoringActivity
 import com.tori.safety.ui.settings.SettingsActivity
@@ -44,6 +47,20 @@ class MainActivity : ToriBaseActivity() {
         setupClickListeners()
         setupVoiceAssistant()
     }
+
+    override fun onStart() {
+        super.onStart()
+        if (::voiceAssistant.isInitialized && hasAudioPermission()) {
+            voiceAssistant.startListening()
+        }
+    }
+
+    override fun onStop() {
+        if (::voiceAssistant.isInitialized) {
+            voiceAssistant.stopListening()
+        }
+        super.onStop()
+    }
     
     private fun setupClickListeners() {
         binding.btnStartMonitoring.setOnClickListener {
@@ -51,8 +68,7 @@ class MainActivity : ToriBaseActivity() {
         }
 
         binding.btnEmergencySos.setOnClickListener {
-            // TODO: Show SOS dialog
-            Toast.makeText(this, "SOS Feature Coming Soon", Toast.LENGTH_SHORT).show()
+            confirmAndSendSos()
         }
 
         binding.btnSettings.setOnClickListener {
@@ -125,9 +141,10 @@ class MainActivity : ToriBaseActivity() {
             requestAudioPermission()
             return
         }
-        
-        // For now, just show a message that Tori is listening
-        Toast.makeText(this, "Tori is listening... Say 'Hey Tor' to activate", Toast.LENGTH_LONG).show()
+
+        if (::voiceAssistant.isInitialized) {
+            voiceAssistant.startCommandListening()
+        }
     }
     
     private fun updateVoiceUI(state: VoiceState) {
@@ -173,23 +190,49 @@ class MainActivity : ToriBaseActivity() {
     }
     
     private fun handleCommandData(data: Map<String, Any>) {
-        // Handle specific command actions based on data
+        // Local command actions from VoiceAssistant
+        when (data["action"]) {
+            "OPEN_SCREEN" -> {
+                val screen = data["screen"] as? String
+                when (screen) {
+                    "SETTINGS" -> startActivity(Intent(this, SettingsActivity::class.java))
+                    "CONTACTS" -> startActivity(Intent(this, ContactsActivity::class.java))
+                    "TRIP_LOG" -> startActivity(Intent(this, TripLogActivity::class.java))
+                    "HUD" -> startActivity(Intent(this, com.tori.safety.ui.hud.HudActivity::class.java))
+                    else -> Log.w(TAG, "Unknown screen: $screen")
+                }
+            }
+            "START_MONITORING" -> {
+                startMonitoringViaService()
+            }
+            "STOP_MONITORING" -> {
+                stopMonitoringViaService()
+            }
+            "SEND_SOS" -> {
+                confirmAndSendSos()
+            }
+            "NAVIGATE" -> {
+                val query = data["query"] as? String
+                if (!query.isNullOrBlank()) {
+                    startNavigation(query)
+                }
+            }
+        }
+
+        // Fallback for Gemini data
         when {
             data["needsLocationSearch"] == true -> {
-                // TODO: Implement location search
-                Log.d(TAG, "Location search requested")
+                val query = data["query"] as? String ?: ""
+                if (query.isNotBlank()) startNavigation(query)
             }
             data["needsRestAreaSearch"] == true -> {
-                // TODO: Implement rest area search
-                Log.d(TAG, "Rest area search requested")
+                startNavigation("rest area near me")
             }
             data["needsFoodSearch"] == true -> {
-                // TODO: Implement food search
-                Log.d(TAG, "Food search requested")
+                startNavigation("food near me")
             }
             data["needsSOSActivation"] == true -> {
-                // TODO: Activate SOS
-                Log.d(TAG, "SOS activation requested")
+                confirmAndSendSos()
             }
         }
     }
@@ -221,6 +264,53 @@ class MainActivity : ToriBaseActivity() {
         }
     }
     
+    private fun confirmAndSendSos() {
+        AlertDialog.Builder(this)
+            .setTitle("Send Emergency SOS")
+            .setMessage("Are you sure you want to send an SOS to your emergency contacts?")
+            .setPositiveButton("Send SOS") { _, _ ->
+                sendManualSos()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun sendManualSos() {
+        val intent = Intent(this, AlertService::class.java).apply {
+            action = AlertService.ACTION_SEND_MANUAL_SOS
+        }
+        startForegroundService(intent)
+        Toast.makeText(this, "Sending SOS to your emergency contacts", Toast.LENGTH_LONG).show()
+    }
+
+    private fun startNavigation(query: String) {
+        val gmmIntentUri = Uri.parse("google.navigation:q=$query")
+        val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri).apply {
+            setPackage("com.google.android.apps.maps")
+        }
+        if (mapIntent.resolveActivity(packageManager) != null) {
+            startActivity(mapIntent)
+        } else {
+            Toast.makeText(this, "Google Maps not installed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startMonitoringViaService() {
+        val intent = Intent(this, AlertService::class.java).apply {
+            action = AlertService.ACTION_START_MONITORING
+        }
+        startForegroundService(intent)
+        Toast.makeText(this, "Starting monitoring", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun stopMonitoringViaService() {
+        val intent = Intent(this, AlertService::class.java).apply {
+            action = AlertService.ACTION_STOP_MONITORING
+        }
+        startForegroundService(intent)
+        Toast.makeText(this, "Stopping monitoring", Toast.LENGTH_SHORT).show()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         if (::voiceAssistant.isInitialized) {
