@@ -8,13 +8,27 @@ import kotlinx.coroutines.flow.*
 /**
  * Main Voice Assistant class - Tori
  * Integrates wake word detection, speech recognition, and Gemini AI
+ *
+ * ARCHITECTURE NOTE:
+ * WakeWordDetector uses AudioRecord (raw mic) for energy-based detection.
+ * ToriSpeechRecognizer uses Android SpeechRecognizer (also grabs the mic).
+ * Both CANNOT run simultaneously — they fight for the microphone.
+ *
+ * Strategy:
+ * - Hotword detection: Use ONLY SpeechRecognizer in hotword mode (long silence timeout,
+ *   partial results checked against regex). WakeWordDetector is NOT started.
+ * - Command mode: Cancel SpeechRecognizer hotword, start command mode with shorter timeout.
+ * - After command processed: Return to hotword SpeechRecognizer.
  */
 class VoiceAssistant(
     private val context: Context
 ) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     
-    private val wakeWordDetector = WakeWordDetector(context)
+    // We do NOT use WakeWordDetector anymore — it creates a mic conflict
+    // with SpeechRecognizer. Instead, hotword detection is done via
+    // SpeechRecognizer partial results matched against a regex.
+    private val wakeWordDetector = WakeWordDetector(context) // kept for reference, not started
     private val speechRecognizer = ToriSpeechRecognizer(context)
     private val geminiProcessor = GeminiProcessor(context)
     private val textToSpeech = ToriTextToSpeech(context)
@@ -23,7 +37,7 @@ class VoiceAssistant(
     private val _voiceState = MutableStateFlow(VoiceState.IDLE)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
     
-    private val _response = MutableSharedFlow<VoiceResponse>()
+    private val _response = MutableSharedFlow<VoiceResponse>(extraBufferCapacity = 1)
     val response: SharedFlow<VoiceResponse> = _response.asSharedFlow()
     
     private var isInitialized = false
@@ -40,13 +54,12 @@ class VoiceAssistant(
         try {
             Log.d(TAG, "Initializing Tori Voice Assistant...")
             
-            // Initialize all components
-            wakeWordDetector.initialize()
+            // Initialize components — DO NOT initialize WakeWordDetector (mic conflict)
             speechRecognizer.initialize()
             geminiProcessor.initialize()
             textToSpeech.initialize()
             
-            // Hotword detection using SpeechRecognizer partial results (reliable across devices)
+            // Hotword detection via SpeechRecognizer partial results
             speechRecognizer.partialText
                 .onEach { partial ->
                     if (isInCommandMode || isStartingCommand) return@onEach
@@ -116,7 +129,6 @@ class VoiceAssistant(
     
     fun stopListening() {
         Log.d(TAG, "Stopping voice assistant...")
-        wakeWordDetector.stopListening()
         speechRecognizer.cancel()
         isListening = false
         isInCommandMode = false
@@ -139,9 +151,7 @@ class VoiceAssistant(
         scope.launch {
             _voiceState.value = VoiceState.WAKE_WORD_DETECTED
 
-            // Avoid mic conflicts: stop wake word audio capture before SpeechRecognizer starts
-            wakeWordDetector.stopListening()
-
+            // Stop any current speech recognition before switching modes
             speechRecognizer.cancel()
 
             isInCommandMode = true
@@ -149,8 +159,10 @@ class VoiceAssistant(
             // Provide audio feedback
             textToSpeech.speak("Yes, I'm listening", priority = TTSPriority.HIGH)
 
-            // Start listening for command
-            delay(1200)
+            // Wait for TTS to finish speaking before starting command listening
+            // This prevents the mic from capturing TTS output as user speech
+            waitForTTSCompletion(maxWaitMs = 3000)
+
             _voiceState.value = VoiceState.LISTENING_FOR_COMMAND
             speechRecognizer.startCommandListening()
 
@@ -175,10 +187,11 @@ class VoiceAssistant(
         isInCommandMode = true
         
         // Provide audio feedback
-        textToSpeech.speak("Hello Buddy, How can i help you", priority = TTSPriority.HIGH)
+        textToSpeech.speak("Hello Buddy, How can I help you?", priority = TTSPriority.HIGH)
         
-        // Start listening for command
-        delay(1500) // Wait for TTS to finish
+        // Wait for TTS to finish before starting command listening
+        waitForTTSCompletion(maxWaitMs = 4000)
+
         _voiceState.value = VoiceState.LISTENING_FOR_COMMAND
         speechRecognizer.startCommandListening()
         isStartingCommand = false
@@ -220,6 +233,9 @@ class VoiceAssistant(
                     )
                 )
 
+                // Wait for TTS to finish before returning to hotword listening
+                waitForTTSCompletion(maxWaitMs = 5000)
+
                 _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
                 isInCommandMode = false
                 speechRecognizer.startHotwordListening()
@@ -254,8 +270,9 @@ class VoiceAssistant(
                 data = geminiResponse.data + mapOf("rawCommand" to userText)
             ))
 
-            // Return to wake word listening after the command
-            delay(1500)
+            // Wait for TTS to finish before returning to wake word listening
+            waitForTTSCompletion(maxWaitMs = 15000)
+
             _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
             isInCommandMode = false
             speechRecognizer.startHotwordListening()
@@ -277,9 +294,27 @@ class VoiceAssistant(
             shouldSpeak = true
         ))
         
+        // Wait for error TTS to finish before restarting hotword
+        waitForTTSCompletion(maxWaitMs = 5000)
+
         // Return to listening for wake word
         _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
         speechRecognizer.startHotwordListening()
+    }
+
+    /**
+     * Waits until TTS is no longer speaking, up to maxWaitMs.
+     * This prevents the SpeechRecognizer from capturing TTS audio output as user speech.
+     */
+    private suspend fun waitForTTSCompletion(maxWaitMs: Long) {
+        val startTime = System.currentTimeMillis()
+        // Small initial delay to let TTS engine start
+        delay(500)
+        while (textToSpeech.isSpeaking() && (System.currentTimeMillis() - startTime) < maxWaitMs) {
+            delay(200)
+        }
+        // Extra buffer after TTS finishes to let audio hardware release the speaker
+        delay(300)
     }
 
     private fun isHotword(text: String): Boolean {
@@ -351,7 +386,6 @@ class VoiceAssistant(
     fun release() {
         Log.d(TAG, "Releasing Voice Assistant...")
         scope.cancel()
-        wakeWordDetector.release()
         speechRecognizer.release()
         textToSpeech.release()
         isInitialized = false

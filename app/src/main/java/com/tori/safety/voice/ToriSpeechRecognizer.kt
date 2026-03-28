@@ -24,13 +24,16 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val _speechResult = MutableSharedFlow<SpeechResult>()
+    // IMPORTANT: extraBufferCapacity=1 ensures tryEmit() never silently drops values.
+    // Without it, tryEmit returns false when no collector is suspended and waiting,
+    // causing speech results to be silently lost.
+    private val _speechResult = MutableSharedFlow<SpeechResult>(extraBufferCapacity = 1)
     val speechResult: SharedFlow<SpeechResult> = _speechResult.asSharedFlow()
 
-    private val _partialText = MutableSharedFlow<String>()
+    private val _partialText = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val partialText: SharedFlow<String> = _partialText.asSharedFlow()
 
-    private val _speechError = MutableSharedFlow<String>()
+    private val _speechError = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val speechError: SharedFlow<String> = _speechError.asSharedFlow()
 
     fun initialize() {
@@ -60,8 +63,8 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
         mode = Mode.COMMAND
         startListeningInternal(
             partialResults = true,
-            completeSilenceMs = 3500,
-            possiblyCompleteSilenceMs = 3500
+            completeSilenceMs = 5000,
+            possiblyCompleteSilenceMs = 5000
         )
     }
 
@@ -70,9 +73,13 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
         completeSilenceMs: Int,
         possiblyCompleteSilenceMs: Int
     ) {
+        // If already listening, cancel first and then restart
         if (isListening) {
-            Log.d(TAG, "Already listening")
-            return
+            Log.d(TAG, "Already listening, cancelling before restart")
+            try {
+                speechRecognizer?.cancel()
+            } catch (_: Exception) {}
+            isListening = false
         }
 
         Log.d(TAG, "Starting speech recognition (mode=$mode)...")
@@ -87,7 +94,8 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
 
             // Hints for better OEM compatibility
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            // DO NOT set EXTRA_PREFER_OFFLINE — most devices don't have offline models
+            // and it causes ERROR_NO_MATCH or ERROR_SERVER silently
         }
 
         try {

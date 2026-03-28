@@ -24,14 +24,14 @@ class GeminiProcessor(private val context: Context) {
         Log.d(TAG, "Initializing Gemini AI processor...")
         
         try {
-            if (apiKey.isEmpty()) {
-                Log.e(TAG, "Gemini API key is missing. Fallback mode enabled.")
+            if (apiKey.isEmpty() || apiKey == "YOUR_API_KEY_HERE") {
+                Log.e(TAG, "Gemini API key is missing or placeholder. Fallback mode enabled.")
                 isInitialized = true // Allow fallback mode
                 return
             }
             
             generativeModel = GenerativeModel(
-                modelName = "gemini-1.5-flash",
+                modelName = "gemini-2.5-flash",
                 apiKey = apiKey,
                 systemInstruction = content {
                     text(TORI_SYSTEM_PROMPT)
@@ -39,7 +39,7 @@ class GeminiProcessor(private val context: Context) {
             )
             
             isInitialized = true
-            Log.d(TAG, "Gemini AI processor initialized successfully with API key")
+            Log.d(TAG, "Gemini AI processor initialized successfully with model gemini-2.5-flash")
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Gemini AI", e)
@@ -54,6 +54,12 @@ class GeminiProcessor(private val context: Context) {
         
         if (!isInitialized) {
             throw IllegalStateException("Gemini processor not initialized")
+        }
+        
+        // If generativeModel was never initialized (no API key), use fallback
+        if (!::generativeModel.isInitialized) {
+            Log.w(TAG, "Gemini model not available, using fallback for: $userInput")
+            return@withContext getFallbackResponse(userInput)
         }
         
         try {
@@ -78,7 +84,7 @@ class GeminiProcessor(private val context: Context) {
             )
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing command with Gemini", e)
+            Log.e(TAG, "Error processing command with Gemini: ${e.message}", e)
             
             // Use fallback response
             return@withContext getFallbackResponse(userInput)
