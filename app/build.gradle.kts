@@ -50,12 +50,12 @@ android {
     }
     
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
     
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "11"
     }
     
     buildFeatures {
@@ -66,6 +66,11 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/INDEX.LIST"
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/LICENSE.md"
+            excludes += "/META-INF/NOTICE.md"
+            excludes += "/META-INF/io.netty.versions.properties"
         }
     }
 }
@@ -115,8 +120,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
     implementation("androidx.preference:preference-ktx:1.2.1")
 
-    // AI — New unified Google GenAI SDK (replaces deprecated generativeai:0.9.0)
-    implementation("com.google.genai:google-genai:1.0.0")
+    // AI — Using OkHttp for direct Gemini REST API calls (both SDKs are broken on Android)
+    // Old SDK (com.google.ai.client.generativeai:0.9.0) silently fails API calls
+    // New SDK (com.google.genai:google-genai) crashes with Apache HTTP conflicts
+    // Direct REST API via OkHttp is the most reliable approach
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp)
