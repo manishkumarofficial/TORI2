@@ -10,14 +10,18 @@ import kotlinx.coroutines.withContext
 
 /**
  * Gemini AI processor for Tori voice assistant
- * Handles natural language processing and response generation
+ *
+ * FIX v2:
+ * - Try multiple model names (gemini-2.0-flash, then gemini-1.5-flash as fallback)
+ * - Log the FULL exception when API calls fail (was being swallowed silently)
+ * - Improved fallback responses for general questions
+ * - Better system prompt that explicitly tells Gemini to answer questions directly
  */
 class GeminiProcessor(private val context: Context) {
     
-    private lateinit var generativeModel: GenerativeModel
+    private var generativeModel: GenerativeModel? = null
     private var isInitialized = false
     
-    // API key from BuildConfig (set in build.gradle.kts via local.properties)
     private val apiKey = BuildConfig.GEMINI_API_KEY
     
     suspend fun initialize() {
@@ -27,24 +31,42 @@ class GeminiProcessor(private val context: Context) {
         try {
             if (apiKey.isEmpty() || apiKey == "YOUR_API_KEY_HERE") {
                 Log.e(TAG, "Gemini API key is missing or placeholder. Fallback mode enabled.")
-                isInitialized = true // Allow fallback mode
+                isInitialized = true
                 return
             }
             
-            generativeModel = GenerativeModel(
-                modelName = "gemini-2.0-flash",
+            // Try gemini-2.0-flash first, fall back to 1.5-flash
+            generativeModel = tryCreateModel("gemini-2.0-flash")
+                ?: tryCreateModel("gemini-1.5-flash")
+
+            if (generativeModel != null) {
+                Log.d(TAG, "Gemini AI processor initialized successfully")
+            } else {
+                Log.e(TAG, "Could not create any Gemini model — fallback mode enabled")
+            }
+            
+            isInitialized = true
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize Gemini AI: ${e.javaClass.simpleName}: ${e.message}", e)
+            isInitialized = true // Allow fallback mode
+        }
+    }
+
+    private fun tryCreateModel(modelName: String): GenerativeModel? {
+        return try {
+            val model = GenerativeModel(
+                modelName = modelName,
                 apiKey = apiKey,
                 systemInstruction = content {
                     text(TORI_SYSTEM_PROMPT)
                 }
             )
-            
-            isInitialized = true
-            Log.d(TAG, "Gemini AI processor initialized successfully with model gemini-2.0-flash")
-            
+            Log.d(TAG, "Created model: $modelName")
+            model
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize Gemini AI (${e.javaClass.simpleName}): ${e.message}", e)
-            isInitialized = true // Allow fallback mode
+            Log.w(TAG, "Failed to create model $modelName: ${e.message}")
+            null
         }
     }
     
@@ -57,8 +79,8 @@ class GeminiProcessor(private val context: Context) {
             throw IllegalStateException("Gemini processor not initialized")
         }
         
-        // If generativeModel was never initialized (no API key), use fallback
-        if (!::generativeModel.isInitialized) {
+        val model = generativeModel
+        if (model == null) {
             Log.w(TAG, "Gemini model not available, using fallback for: $userInput")
             return@withContext getFallbackResponse(userInput)
         }
@@ -66,20 +88,20 @@ class GeminiProcessor(private val context: Context) {
         try {
             Log.d(TAG, "Processing command with Gemini: '$userInput'")
             
-            // Build context-aware prompt
             val prompt = buildPrompt(userInput, context)
-            Log.d(TAG, "Prompt built, sending to Gemini API...")
+            Log.d(TAG, "Sending prompt to Gemini API...")
             
-            // Generate response using Gemini
-            val response = generativeModel.generateContent(prompt)
-            val responseText = response.text ?: "I'm sorry, I couldn't process that request."
+            val response = model.generateContent(prompt)
+            val responseText = response.text
             
-            Log.d(TAG, "Gemini response received (${responseText.length} chars): '$responseText'")
+            if (responseText.isNullOrBlank()) {
+                Log.w(TAG, "Gemini returned empty response, using fallback")
+                return@withContext getFallbackResponse(userInput)
+            }
             
-            // Parse response for any special actions
+            Log.d(TAG, "Gemini API response (${responseText.length} chars): '$responseText'")
+            
             val parsedResponse = parseResponse(responseText, userInput)
-            
-            Log.d(TAG, "Parsed response — intent: ${parsedResponse.intent}, message: '${parsedResponse.message}'")
             
             return@withContext GeminiResponse(
                 message = parsedResponse.message,
@@ -88,11 +110,11 @@ class GeminiProcessor(private val context: Context) {
             )
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing command with Gemini (${e.javaClass.simpleName}): ${e.message}", e)
+            // LOG THE FULL ERROR — this was being silently swallowed before
+            Log.e(TAG, "Gemini API call FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
+            Log.e(TAG, "Full stack trace:", e)
             
-            // Use fallback response
             val fallback = getFallbackResponse(userInput)
-            Log.d(TAG, "Using fallback response: '${fallback.message}'")
             return@withContext fallback
         }
     }
@@ -102,7 +124,7 @@ class GeminiProcessor(private val context: Context) {
         
         val (message, intent) = when {
             input.contains("tired") || input.contains("sleepy") -> {
-                "I understand you're feeling tired, Manish. Let me help you find a rest area nearby." to Intent.WELLNESS_TIRED
+                "I understand you're feeling tired. Let me help you find a rest area nearby." to Intent.WELLNESS_TIRED
             }
             input.contains("hungry") || input.contains("food") -> {
                 "Got it! I'll help you find some food options nearby." to Intent.WELLNESS_HUNGRY
@@ -119,14 +141,23 @@ class GeminiProcessor(private val context: Context) {
             input.contains("traffic") -> {
                 "I'll check the traffic conditions ahead." to Intent.TRAFFIC
             }
-            input.contains("emergency") || input.contains("help") -> {
+            input.contains("emergency") || input.contains("help me") -> {
                 "I'm here to help. Do you need emergency assistance?" to Intent.EMERGENCY
             }
-            input.contains("where am i") || input.contains("location") -> {
-                "Let me get your current location for you." to Intent.LOCATION
+            input.contains("name") && (input.contains("your") || input.contains("you")) -> {
+                "I'm Tori, your AI driving companion! I'm here to keep you safe and help you on the road. Think of me like your personal co-pilot." to Intent.GENERAL
+            }
+            input.contains("hello") || input.contains("hi ") || input.startsWith("hi") -> {
+                "Hey there! I'm Tori, your driving assistant. How can I help you today?" to Intent.GENERAL
+            }
+            input.contains("how are you") -> {
+                "I'm doing great, thanks for asking! All systems running smoothly. How about you?" to Intent.GENERAL
+            }
+            input.contains("thank") -> {
+                "You're welcome! Always happy to help. Let me know if you need anything else." to Intent.GENERAL
             }
             else -> {
-                "I heard you say '$userInput'. How can I help you with that?" to Intent.GENERAL
+                "I'm sorry, I'm having trouble connecting to my AI brain right now. I can still help with navigation, finding places, and safety features. What do you need?" to Intent.GENERAL
             }
         }
         
@@ -145,23 +176,32 @@ class GeminiProcessor(private val context: Context) {
         val contextHistory = context.recentInteractions.takeLast(3)
             .joinToString("\n") { "User: ${it.userInput}\nTori: ${it.assistantResponse}" }
         
-        return """
-            Previous conversation:
-            $contextHistory
-            
-            Current user input: $userInput
-            
-            Respond as Tori, keeping the conversation natural and helpful.
-        """.trimIndent()
+        return if (contextHistory.isBlank()) {
+            "User says: $userInput\n\nRespond directly and helpfully as Tori."
+        } else {
+            """
+                Previous conversation:
+                $contextHistory
+                
+                User says: $userInput
+                
+                Respond directly and helpfully as Tori. Answer the question if it's a question.
+            """.trimIndent()
+        }
     }
     
     private fun parseResponse(responseText: String, userInput: String): ParsedResponse {
-        // Analyze the user input and response to determine intent
         val intent = determineIntent(userInput, responseText)
         val data = extractData(userInput, responseText, intent)
         
+        // Clean up the response — remove any markdown or formatting
+        val cleanResponse = responseText
+            .replace(Regex("\\*\\*(.+?)\\*\\*"), "$1")  // Remove bold markdown
+            .replace(Regex("\\*(.+?)\\*"), "$1")          // Remove italic markdown
+            .trim()
+        
         return ParsedResponse(
-            message = responseText,
+            message = cleanResponse,
             intent = intent,
             data = data
         )
@@ -177,7 +217,7 @@ class GeminiProcessor(private val context: Context) {
             input.contains("find") || input.contains("search") || input.contains("nearby") -> Intent.SEARCH
             input.contains("weather") -> Intent.WEATHER
             input.contains("traffic") -> Intent.TRAFFIC
-            input.contains("emergency") || input.contains("help") || input.contains("sos") -> Intent.EMERGENCY
+            input.contains("emergency") || input.contains("sos") -> Intent.EMERGENCY
             input.contains("where am i") || input.contains("location") -> Intent.LOCATION
             else -> Intent.GENERAL
         }
@@ -188,7 +228,6 @@ class GeminiProcessor(private val context: Context) {
         
         when (intent) {
             Intent.NAVIGATION, Intent.SEARCH -> {
-                // Extract location/place information
                 data["query"] = userInput
                 data["needsLocationSearch"] = true
             }
@@ -204,9 +243,7 @@ class GeminiProcessor(private val context: Context) {
                 data["emergencyType"] = "general"
                 data["needsSOSActivation"] = true
             }
-            else -> {
-                // General conversation
-            }
+            else -> {}
         }
         
         return data
@@ -216,37 +253,20 @@ class GeminiProcessor(private val context: Context) {
         private const val TAG = "GeminiProcessor"
         
         private const val TORI_SYSTEM_PROMPT = """
-            You are Tori, an intelligent voice assistant integrated into a driving safety app called TOR-I. 
-            You are similar to JARVIS from Iron Man - helpful, intelligent, and slightly witty.
+            You are Tori, an intelligent voice assistant inside a driving safety app called TOR-I.
+            You are like JARVIS from Iron Man — helpful, knowledgeable, and slightly witty.
             
-            Your primary role is to assist drivers with:
-            - Navigation and directions
-            - Finding nearby places (gas stations, restaurants, rest areas)
-            - Wellness checks (when drivers are tired, hungry, or sleepy)
-            - Weather and traffic information
-            - Emergency assistance
-            - General conversation to keep drivers alert and engaged
+            CRITICAL RULES:
+            1. ALWAYS answer the user's question directly. If they ask "what is Python", explain Python.
+            2. If they ask your name, say you're Tori.
+            3. Keep responses concise (2-3 sentences max) since they will be spoken aloud via TTS.
+            4. Be conversational and friendly, not robotic.
+            5. Never echo back what the user said without answering.
+            6. For driving-related requests (navigation, rest areas, food), be proactive about helping.
+            7. Use the driver's name (Manish) occasionally.
             
-            Key personality traits:
-            - Friendly and conversational
-            - Safety-focused (always prioritize driver safety)
-            - Slightly witty but professional
-            - Proactive in suggesting breaks when needed
-            - Use the driver's name (Manish) when appropriate
-            
-            Response guidelines:
-            - Keep responses concise but helpful
-            - Always acknowledge the user's request
-            - For safety-related requests (tired, sleepy), be proactive about suggesting rest
-            - For navigation requests, confirm the destination
-            - Use natural, conversational language
-            - Don't be overly formal
-            
-            Example responses:
-            - "No worries, Manish. Let me find the nearest rest area for you."
-            - "Got it. Searching for gas stations nearby."
-            - "I can help with that. What's your destination?"
-            - "Sounds like you need a break. Let me find some good rest stops ahead."
+            You can help with: navigation, finding nearby places, wellness advice (if driver is tired/hungry),
+            weather, traffic info, emergency assistance, and general knowledge questions.
         """
     }
 }

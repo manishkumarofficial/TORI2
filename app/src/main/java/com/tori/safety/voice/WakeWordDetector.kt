@@ -11,8 +11,15 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Improved wake word detector for "Hey Tor"
- * Uses advanced audio analysis to reduce false positives from background music
+ * Voice Activity Detector for Tori wake word.
+ * 
+ * NOTE: This is an ENERGY-BASED detector, not a true wake word recognizer.
+ * It detects speech-like audio patterns above a threshold. It CANNOT
+ * distinguish "Hey Tor" from other speech. For true wake word detection,
+ * integrate a library like Picovoice Porcupine.
+ * 
+ * Thresholds are set HIGH to minimize false positives — the user needs
+ * to speak clearly and directly at the phone for about 1 second.
  */
 class WakeWordDetector(private val context: Context) {
     
@@ -30,15 +37,15 @@ class WakeWordDetector(private val context: Context) {
     
     // Advanced detection parameters
     private var lastDetectionTime = 0L
-    private val detectionCooldown = 4000L // 4 seconds cooldown
+    private val detectionCooldown = 6000L // 6 seconds cooldown (was 4s)
     private val energyHistory = mutableListOf<Double>()
     private val maxHistorySize = 50 // Keep last 50 energy readings
     
-    // Thresholds for better detection
-    private val baseEnergyThreshold = 2000.0 // Base energy threshold
-    private val speechPatternThreshold = 1.5 // Speech vs music pattern detection
-    private val consecutiveFramesRequired = 8 // Require more consecutive frames
-    private val silenceFramesRequired = 3 // Require silence before speech
+    // Detection parameters — set HIGH to minimize false positives
+    private val baseEnergyThreshold = 4000.0 // High energy threshold (was 2000)
+    private val speechPatternThreshold = 1.5
+    private val consecutiveFramesRequired = 15 // Need ~0.5s of continuous speech (was 8)
+    private val silenceFramesRequired = 5 // Need clear silence before speech (was 3)
     
     // Pattern detection variables
     private var consecutiveHighEnergy = 0
