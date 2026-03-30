@@ -22,6 +22,7 @@ class GeminiProcessor(private val context: Context) {
     
     suspend fun initialize() {
         Log.d(TAG, "Initializing Gemini AI processor...")
+        Log.d(TAG, "API key length: ${apiKey.length}, starts with: ${apiKey.take(10)}...")
         
         try {
             if (apiKey.isEmpty() || apiKey == "YOUR_API_KEY_HERE") {
@@ -31,7 +32,7 @@ class GeminiProcessor(private val context: Context) {
             }
             
             generativeModel = GenerativeModel(
-                modelName = "gemini-2.5-flash",
+                modelName = "gemini-2.0-flash",
                 apiKey = apiKey,
                 systemInstruction = content {
                     text(TORI_SYSTEM_PROMPT)
@@ -39,10 +40,10 @@ class GeminiProcessor(private val context: Context) {
             )
             
             isInitialized = true
-            Log.d(TAG, "Gemini AI processor initialized successfully with model gemini-2.5-flash")
+            Log.d(TAG, "Gemini AI processor initialized successfully with model gemini-2.0-flash")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize Gemini AI", e)
+            Log.e(TAG, "Failed to initialize Gemini AI (${e.javaClass.simpleName}): ${e.message}", e)
             isInitialized = true // Allow fallback mode
         }
     }
@@ -63,19 +64,22 @@ class GeminiProcessor(private val context: Context) {
         }
         
         try {
-            Log.d(TAG, "Processing command with Gemini: $userInput")
+            Log.d(TAG, "Processing command with Gemini: '$userInput'")
             
             // Build context-aware prompt
             val prompt = buildPrompt(userInput, context)
+            Log.d(TAG, "Prompt built, sending to Gemini API...")
             
             // Generate response using Gemini
             val response = generativeModel.generateContent(prompt)
             val responseText = response.text ?: "I'm sorry, I couldn't process that request."
             
-            Log.d(TAG, "Gemini response received: $responseText")
+            Log.d(TAG, "Gemini response received (${responseText.length} chars): '$responseText'")
             
             // Parse response for any special actions
             val parsedResponse = parseResponse(responseText, userInput)
+            
+            Log.d(TAG, "Parsed response — intent: ${parsedResponse.intent}, message: '${parsedResponse.message}'")
             
             return@withContext GeminiResponse(
                 message = parsedResponse.message,
@@ -84,10 +88,12 @@ class GeminiProcessor(private val context: Context) {
             )
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing command with Gemini: ${e.message}", e)
+            Log.e(TAG, "Error processing command with Gemini (${e.javaClass.simpleName}): ${e.message}", e)
             
             // Use fallback response
-            return@withContext getFallbackResponse(userInput)
+            val fallback = getFallbackResponse(userInput)
+            Log.d(TAG, "Using fallback response: '${fallback.message}'")
+            return@withContext fallback
         }
     }
     

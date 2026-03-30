@@ -19,6 +19,13 @@ import kotlinx.coroutines.flow.*
  *   partial results checked against regex). WakeWordDetector is NOT started.
  * - Command mode: Cancel SpeechRecognizer hotword, start command mode with shorter timeout.
  * - After command processed: Return to hotword SpeechRecognizer.
+ *
+ * FIX NOTES:
+ * - Added delay after cancel() to let mic hardware release before restarting
+ * - Always reset isStartingCommand in finally blocks to prevent deadlocks
+ * - Improved error handling with proper state transitions
+ * - Added isProcessingCommand guard to prevent double-processing
+ * - Added comprehensive logging for debugging on-device
  */
 class VoiceAssistant(
     private val context: Context
@@ -37,13 +44,14 @@ class VoiceAssistant(
     private val _voiceState = MutableStateFlow(VoiceState.IDLE)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
     
-    private val _response = MutableSharedFlow<VoiceResponse>(extraBufferCapacity = 1)
+    private val _response = MutableSharedFlow<VoiceResponse>(extraBufferCapacity = 5)
     val response: SharedFlow<VoiceResponse> = _response.asSharedFlow()
     
     private var isInitialized = false
     private var isListening = false
     private var isInCommandMode = false
     private var isStartingCommand = false
+    private var isProcessingCommand = false // NEW: prevents double-processing
     private var startRequested = false
 
     private val hotwordRegex = Regex("\\b(h(i|ey)|hai)\\s*(to(r|ri|ry|re)|tar)\\b", RegexOption.IGNORE_CASE)
@@ -62,7 +70,7 @@ class VoiceAssistant(
             // Hotword detection via SpeechRecognizer partial results
             speechRecognizer.partialText
                 .onEach { partial ->
-                    if (isInCommandMode || isStartingCommand) return@onEach
+                    if (isInCommandMode || isStartingCommand || isProcessingCommand) return@onEach
                     if (isHotword(partial)) {
                         Log.d(TAG, "Hotword detected from partial: $partial")
                         onWakeWordDetected()
@@ -71,9 +79,17 @@ class VoiceAssistant(
                 .launchIn(scope)
             
             // Set up speech recognition results
+            // CRITICAL: Only process results when we are actually in command mode.
+            // Without this guard, hotword-mode results that leak to speechResult
+            // would be processed as commands.
             speechRecognizer.speechResult
                 .onEach { result ->
-                    Log.d(TAG, "Speech recognized: ${result.text}")
+                    Log.d(TAG, "Speech result received: '${result.text}' (confidence: ${result.confidence})")
+                    Log.d(TAG, "State: commandMode=$isInCommandMode, startingCommand=$isStartingCommand, processing=$isProcessingCommand")
+                    if (!isInCommandMode && !isStartingCommand) {
+                        Log.w(TAG, "Ignoring speech result — not in command mode")
+                        return@onEach
+                    }
                     onSpeechRecognized(result)
                 }
                 .launchIn(scope)
@@ -81,7 +97,7 @@ class VoiceAssistant(
             // Set up speech recognition errors
             speechRecognizer.speechError
                 .onEach { error ->
-                    Log.e(TAG, "Speech recognition error: $error")
+                    Log.e(TAG, "Speech recognition error: $error (commandMode=$isInCommandMode, startingCommand=$isStartingCommand)")
                     if (isInCommandMode || isStartingCommand) {
                         handleError(error)
                     } else {
@@ -110,7 +126,7 @@ class VoiceAssistant(
     fun startListening() {
 
         if (!isInitialized) {
-            Log.w(TAG, "Voice Assistant not initialized")
+            Log.w(TAG, "Voice Assistant not initialized — deferring start")
             startRequested = true
             return
         }
@@ -121,9 +137,11 @@ class VoiceAssistant(
         }
         
         Log.d(TAG, "Starting hotword listening...")
+        isInCommandMode = false
+        isStartingCommand = false
+        isProcessingCommand = false
         speechRecognizer.startHotwordListening()
         isListening = true
-        isInCommandMode = false
         _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
     }
     
@@ -133,6 +151,7 @@ class VoiceAssistant(
         isListening = false
         isInCommandMode = false
         isStartingCommand = false
+        isProcessingCommand = false
         startRequested = false
         _voiceState.value = VoiceState.IDLE
     }
@@ -144,64 +163,92 @@ class VoiceAssistant(
             return
         }
 
+        if (isInCommandMode || isStartingCommand || isProcessingCommand) {
+            Log.d(TAG, "Already in command/processing mode — ignoring duplicate trigger")
+            return
+        }
+
         if (!isListening) {
             isListening = true
         }
 
         scope.launch {
+            isStartingCommand = true
             _voiceState.value = VoiceState.WAKE_WORD_DETECTED
 
-            // Stop any current speech recognition before switching modes
-            speechRecognizer.cancel()
+            try {
+                // Cancel hotword SILENTLY — suppress the ERROR_CLIENT that Android
+                // fires when cancel() is called, preventing it from triggering
+                // unwanted hotword restarts that interfere with command mode.
+                speechRecognizer.cancelSilently()
 
-            isInCommandMode = true
+                isInCommandMode = true
+                isProcessingCommand = false
 
-            // Provide audio feedback
-            textToSpeech.speak("Yes, I'm listening", priority = TTSPriority.HIGH)
+                // Provide audio feedback
+                textToSpeech.speak("Yes, I'm listening", priority = TTSPriority.HIGH)
 
-            // Wait for TTS to finish speaking before starting command listening
-            // This prevents the mic from capturing TTS output as user speech
-            waitForTTSCompletion(maxWaitMs = 3000)
+                // Wait for TTS to finish speaking before starting command listening
+                // This prevents the mic from capturing TTS output as user speech
+                waitForTTSCompletion(maxWaitMs = 3000)
 
-            _voiceState.value = VoiceState.LISTENING_FOR_COMMAND
-            speechRecognizer.startCommandListening()
+                // Small extra delay to let audio hardware fully release
+                delay(300)
 
-            _response.emit(
-                VoiceResponse(
-                    type = ResponseType.WAKE_WORD_ACKNOWLEDGED,
-                    message = "Listening for your command...",
-                    shouldSpeak = false
+                _voiceState.value = VoiceState.LISTENING_FOR_COMMAND
+                Log.d(TAG, "Starting SpeechRecognizer in command mode (manual trigger)...")
+                speechRecognizer.startCommandListening()
+
+                _response.emit(
+                    VoiceResponse(
+                        type = ResponseType.WAKE_WORD_ACKNOWLEDGED,
+                        message = "Listening for your command...",
+                        shouldSpeak = false
+                    )
                 )
-            )
+            } finally {
+                isStartingCommand = false
+            }
         }
     }
     
     private suspend fun onWakeWordDetected() {
-        if (isStartingCommand || isInCommandMode) return
+        if (isStartingCommand || isInCommandMode || isProcessingCommand) {
+            Log.d(TAG, "Ignoring wake word — already in command/processing mode")
+            return
+        }
         isStartingCommand = true
         _voiceState.value = VoiceState.WAKE_WORD_DETECTED
 
-        // Stop hotword loop before starting command capture
-        speechRecognizer.cancel()
+        try {
+            // Cancel hotword SILENTLY before starting command capture
+            speechRecognizer.cancelSilently()
 
-        isInCommandMode = true
-        
-        // Provide audio feedback
-        textToSpeech.speak("Hello Buddy, How can I help you?", priority = TTSPriority.HIGH)
-        
-        // Wait for TTS to finish before starting command listening
-        waitForTTSCompletion(maxWaitMs = 4000)
+            isInCommandMode = true
 
-        _voiceState.value = VoiceState.LISTENING_FOR_COMMAND
-        speechRecognizer.startCommandListening()
-        isStartingCommand = false
+            // Provide audio feedback
+            textToSpeech.speak("Hello Buddy, How can I help you?", priority = TTSPriority.HIGH)
 
-        // Emit response for UI
-        _response.emit(VoiceResponse(
-            type = ResponseType.WAKE_WORD_ACKNOWLEDGED,
-            message = "Listening for your command...",
-            shouldSpeak = false
-        ))
+            // Wait for TTS to finish before starting command listening
+            waitForTTSCompletion(maxWaitMs = 4000)
+
+            // Extra delay to let audio hardware release after TTS
+            delay(300)
+
+            _voiceState.value = VoiceState.LISTENING_FOR_COMMAND
+            Log.d(TAG, "Starting SpeechRecognizer in command mode (wake word)...")
+            speechRecognizer.startCommandListening()
+
+            // Emit response for UI
+            _response.emit(VoiceResponse(
+                type = ResponseType.WAKE_WORD_ACKNOWLEDGED,
+                message = "Listening for your command...",
+                shouldSpeak = false
+            ))
+        } finally {
+            // CRITICAL: Always reset isStartingCommand to prevent deadlocks
+            isStartingCommand = false
+        }
     }
     
     private suspend fun onSpeechRecognized(result: SpeechResult) {
@@ -211,9 +258,16 @@ class VoiceAssistant(
             return
         }
 
+        // Guard against double-processing
+        if (isProcessingCommand) {
+            Log.w(TAG, "Already processing a command — ignoring duplicate result: '${result.text}'")
+            return
+        }
+
         val userText = result.text.trim()
         
-        Log.d(TAG, "Processing speech: $userText")
+        Log.d(TAG, "Processing speech: '$userText'")
+        isProcessingCommand = true
         _voiceState.value = VoiceState.PROCESSING
 
         try {
@@ -221,6 +275,7 @@ class VoiceAssistant(
             val localAction = parseLocalCommand(userText)
             if (localAction != null) {
                 val localMessage = localAction["message"] as? String ?: "Okay"
+                Log.d(TAG, "Local command matched: $localMessage")
                 _voiceState.value = VoiceState.SPEAKING
                 textToSpeech.speak(localMessage, priority = TTSPriority.NORMAL)
 
@@ -236,9 +291,7 @@ class VoiceAssistant(
                 // Wait for TTS to finish before returning to hotword listening
                 waitForTTSCompletion(maxWaitMs = 5000)
 
-                _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
-                isInCommandMode = false
-                speechRecognizer.startHotwordListening()
+                returnToHotwordListening()
                 return
             }
 
@@ -246,12 +299,13 @@ class VoiceAssistant(
             contextManager.addUserInput(userText)
 
             // Process with Gemini AI
+            Log.d(TAG, "Sending to Gemini: '$userText'")
             val geminiResponse = geminiProcessor.processCommand(
                 userInput = userText,
                 context = contextManager.getContext()
             )
             
-            Log.d(TAG, "Gemini response: ${geminiResponse.message}")
+            Log.d(TAG, "Gemini response: '${geminiResponse.message}'")
             
             // Add AI response to context
             contextManager.addAssistantResponse(geminiResponse.message)
@@ -273,19 +327,28 @@ class VoiceAssistant(
             // Wait for TTS to finish before returning to wake word listening
             waitForTTSCompletion(maxWaitMs = 15000)
 
-            _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
-            isInCommandMode = false
-            speechRecognizer.startHotwordListening()
+            returnToHotwordListening()
 
         } catch (e: Exception) {
             Log.e(TAG, "Error processing speech", e)
             handleError("Sorry, I'm having trouble processing that. Could you try again?")
         }
     }
-    
-    private suspend fun handleError(message: String) {
+
+    /**
+     * Cleanly returns to hotword listening mode, resetting all flags.
+     */
+    private fun returnToHotwordListening() {
+        Log.d(TAG, "Returning to hotword listening mode")
+        _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
         isInCommandMode = false
         isStartingCommand = false
+        isProcessingCommand = false
+        speechRecognizer.startHotwordListening()
+    }
+    
+    private suspend fun handleError(message: String) {
+        isProcessingCommand = false
         textToSpeech.speak(message, priority = TTSPriority.HIGH)
         
         _response.emit(VoiceResponse(
@@ -294,27 +357,40 @@ class VoiceAssistant(
             shouldSpeak = true
         ))
         
-        // Wait for error TTS to finish before restarting hotword
+        // Wait for error TTS to finish
         waitForTTSCompletion(maxWaitMs = 5000)
 
-        // Return to listening for wake word
+        // Reset flags and return to listening for wake word
+        isInCommandMode = false
+        isStartingCommand = false
         _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
         speechRecognizer.startHotwordListening()
     }
 
+
     /**
      * Waits until TTS is no longer speaking, up to maxWaitMs.
-     * This prevents the SpeechRecognizer from capturing TTS audio output as user speech.
+     * Uses a simple reliable polling approach with a generous initial delay
+     * to let the TTS engine actually start before checking isSpeaking().
      */
     private suspend fun waitForTTSCompletion(maxWaitMs: Long) {
         val startTime = System.currentTimeMillis()
-        // Small initial delay to let TTS engine start
-        delay(500)
-        while (textToSpeech.isSpeaking() && (System.currentTimeMillis() - startTime) < maxWaitMs) {
-            delay(200)
+        // Initial delay to let TTS engine start — isSpeaking() returns false
+        // until the utterance actually begins playback
+        delay(800)
+        
+        // Poll speakingState (backed by UtteranceProgressListener) + isSpeaking()
+        while ((System.currentTimeMillis() - startTime) < maxWaitMs) {
+            val stateFlowSpeaking = textToSpeech.speakingState.value
+            val apiSpeaking = textToSpeech.isSpeaking()
+            if (!stateFlowSpeaking && !apiSpeaking) {
+                break
+            }
+            delay(150)
         }
-        // Extra buffer after TTS finishes to let audio hardware release the speaker
-        delay(300)
+        
+        // Extra buffer to let audio hardware fully release speaker/mic
+        delay(400)
     }
 
     private fun isHotword(text: String): Boolean {

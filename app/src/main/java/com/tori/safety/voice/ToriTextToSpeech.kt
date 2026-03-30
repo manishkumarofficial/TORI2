@@ -102,7 +102,12 @@ class ToriTextToSpeech(private val context: Context) {
             putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
         }
         
-        tts?.speak(text, queueMode, params, utteranceId)
+        val result = tts?.speak(text, queueMode, params, utteranceId)
+        if (result == TextToSpeech.ERROR) {
+            Log.e(TAG, "TTS speak() returned ERROR for text: '$text'")
+        } else {
+            Log.d(TAG, "TTS speak() queued successfully (utteranceId=$utteranceId)")
+        }
     }
     
     fun stop() {

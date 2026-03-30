@@ -8,7 +8,7 @@ import kotlinx.coroutines.withContext
 class GeminiHelper(private val apiKey: String) {
 
     private val generativeModel = GenerativeModel(
-        modelName = "gemini-2.5-flash",
+        modelName = "gemini-2.0-flash",
         apiKey = apiKey
     )
 
