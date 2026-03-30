@@ -37,15 +37,15 @@ class WakeWordDetector(private val context: Context) {
     
     // Advanced detection parameters
     private var lastDetectionTime = 0L
-    private val detectionCooldown = 6000L // 6 seconds cooldown (was 4s)
+    private val detectionCooldown = 5000L // 5 seconds cooldown
     private val energyHistory = mutableListOf<Double>()
     private val maxHistorySize = 50 // Keep last 50 energy readings
     
-    // Detection parameters — set HIGH to minimize false positives
-    private val baseEnergyThreshold = 4000.0 // High energy threshold (was 2000)
+    // Detection parameters — moderate thresholds to balance sensitivity vs false positives
+    private val baseEnergyThreshold = 2500.0 // Moderate energy threshold
     private val speechPatternThreshold = 1.5
-    private val consecutiveFramesRequired = 15 // Need ~0.5s of continuous speech (was 8)
-    private val silenceFramesRequired = 5 // Need clear silence before speech (was 3)
+    private val consecutiveFramesRequired = 10 // ~0.3s of continuous speech
+    private val silenceFramesRequired = 4 // Need clear silence before speech
     
     // Pattern detection variables
     private var consecutiveHighEnergy = 0

@@ -1,48 +1,46 @@
 package com.tori.safety.voice
 
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.content
+import com.google.genai.Client
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * Helper for standalone Gemini calls (used by VoiceManager/VoiceAssistantFragment).
+ * Uses the new com.google.genai SDK.
+ */
 class GeminiHelper(private val apiKey: String) {
 
-    private val generativeModel = GenerativeModel(
-        modelName = "gemini-2.0-flash",
-        apiKey = apiKey
-    )
+    private val client: Client = Client.builder()
+        .apiKey(apiKey)
+        .build()
+    
+    private val modelName = "gemini-2.0-flash"
 
-    // Maintain a simple chat history
+    // Simple chat history
     private val chatHistory = mutableListOf<String>()
 
     init {
-        // Seed history
-        chatHistory.add("System: You are Tori, a helpful and friendly driving assistant. Your persona is like Iron Man's JARVIS or F.R.I.D.A.Y. Keep responses concise and natural.")
+        chatHistory.add("System: You are Tori, a helpful and friendly driving assistant. Keep responses concise and natural.")
     }
 
     suspend fun processCommand(userText: String): GeminiResponse {
         return withContext(Dispatchers.IO) {
             chatHistory.add("User: $userText")
             
-            // Limit history to last 10 turns
             if (chatHistory.size > 20) {
-                 chatHistory.removeAt(1) // Keep system prompt at 0
+                chatHistory.removeAt(1)
             }
 
             val prompt = buildPrompt()
             try {
-                val response = generativeModel.generateContent(prompt)
-                val responseText = response.text ?: ""
+                val response = client.models.generateContent(modelName, prompt, null)
+                val responseText = response.text() ?: ""
                 
                 chatHistory.add("Tori: $responseText")
-                
-                // Parse the response to extract intent and reply
-                // We expect Gemini to return a specific format, e.g., JSON or a structured string
                 parseResponse(responseText)
             } catch (e: Exception) {
-                // Remove prompt if failed
                 if (chatHistory.last().startsWith("User:")) chatHistory.removeLast()
-                GeminiResponse(IntentType.UNKNOWN, "Sorry, I'm having trouble connecting to my brain right now.", null)
+                GeminiResponse(IntentType.UNKNOWN, "Sorry, I'm having trouble connecting right now.", null)
             }
         }
     }
@@ -77,28 +75,25 @@ class GeminiHelper(private val apiKey: String) {
             }
         }
         
-        // Fallback if parsing fails but we have text (likely just a chat response)
         if (intent == IntentType.UNKNOWN && !text.contains("INTENT:")) {
-             intent = IntentType.CHAT
-             reply = text
+            intent = IntentType.CHAT
+            reply = text
         }
 
         return GeminiResponse(intent, reply, data)
     }
 
-    // Proactive Companion Mode
     suspend fun generateProactivePrompt(): String {
         return withContext(Dispatchers.IO) {
             val prompt = """
                 You are Tori, a driving companion. The driver has been quiet for a while.
-                Generate a short, friendly, and engaging question or comment to keep them awake and attentive.
-                Examples: "It's quiet. How are you feeling?", "Do you want to play a trivia game to stay alert?", "Look at the road ahead, traffic seems clear."
+                Generate a short, friendly question or comment to keep them alert.
                 Return JUST the text of the message.
             """.trimIndent()
             
             try {
-                val response = generativeModel.generateContent(prompt)
-                response.text ?: "Hey, just checking in. You good?"
+                val response = client.models.generateContent(modelName, prompt, null)
+                response.text() ?: "Hey, just checking in. You good?"
             } catch (e: Exception) {
                 "Stay alert, Manish."
             }

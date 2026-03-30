@@ -50,12 +50,12 @@ android {
     }
     
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "17"
     }
     
     buildFeatures {
@@ -115,8 +115,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
     implementation("androidx.preference:preference-ktx:1.2.1")
 
-    // AI & Networking
-    implementation(libs.google.generativeai)
+    // AI — New unified Google GenAI SDK (replaces deprecated generativeai:0.9.0)
+    implementation("com.google.genai:google-genai:1.0.0")
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp)
