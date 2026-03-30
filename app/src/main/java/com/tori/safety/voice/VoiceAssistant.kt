@@ -6,272 +6,242 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
 /**
- * Main Voice Assistant class - Tori
- * Integrates wake word detection, speech recognition, and Gemini AI
+ * Main Voice Assistant — Tori
  *
- * ARCHITECTURE NOTE:
- * WakeWordDetector uses AudioRecord (raw mic) for energy-based detection.
- * ToriSpeechRecognizer uses Android SpeechRecognizer (also grabs the mic).
- * Both CANNOT run simultaneously — they fight for the microphone.
+ * ARCHITECTURE (v4):
  *
- * Strategy:
- * - Hotword detection: Use ONLY SpeechRecognizer in hotword mode (long silence timeout,
- *   partial results checked against regex). WakeWordDetector is NOT started.
- * - Command mode: Cancel SpeechRecognizer hotword, start command mode with shorter timeout.
- * - After command processed: Return to hotword SpeechRecognizer.
+ * ┌──────────────┐  wake word   ┌──────────────────┐  spoken   ┌─────────┐
+ * │ WakeWordDet. │ ──────────→  │ SpeechRecognizer │ ───────→  │ Gemini  │
+ * │ (AudioRecord)│              │ (command mode)   │           │   AI    │
+ * │ silent, no   │              │ plays beep       │           │         │
+ * │ beeps        │              │ on start         │           │         │
+ * └──────────────┘              └──────────────────┘           └─────────┘
+ *       ↑                                                          │
+ *       └──────────────── after response TTSed ←───────────────────┘
  *
- * FIX NOTES:
- * - Added delay after cancel() to let mic hardware release before restarting
- * - Always reset isStartingCommand in finally blocks to prevent deadlocks
- * - Improved error handling with proper state transitions
- * - Added isProcessingCommand guard to prevent double-processing
- * - Added comprehensive logging for debugging on-device
+ * STATES:
+ *   IDLE → WAKE_WORD_LISTENING → WAKE_WORD_DETECTED → LISTENING_FOR_COMMAND
+ *        → PROCESSING → SPEAKING → WAKE_WORD_LISTENING
+ *
+ * KEY RULES:
+ *   1. App launch: Initialize + start WakeWordDetector (silent, no beeps)
+ *   2. WakeWordDetector fires: Stop it → TTS → SpeechRecognizer command mode
+ *   3. Button press: Stop WakeWordDetector → TTS → SpeechRecognizer command mode
+ *   4. SpeechRecognizer is NEVER used for background/hotword detection
+ *   5. After processing: TTS response → restart WakeWordDetector
  */
 class VoiceAssistant(
     private val context: Context
 ) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    
-    // We do NOT use WakeWordDetector anymore — it creates a mic conflict
-    // with SpeechRecognizer. Instead, hotword detection is done via
-    // SpeechRecognizer partial results matched against a regex.
-    private val wakeWordDetector = WakeWordDetector(context) // kept for reference, not started
+
+    // Components
+    private val wakeWordDetector = WakeWordDetector(context)
     private val speechRecognizer = ToriSpeechRecognizer(context)
     private val geminiProcessor = GeminiProcessor(context)
     private val textToSpeech = ToriTextToSpeech(context)
     private val contextManager = ConversationContextManager()
-    
+
+    // State
     private val _voiceState = MutableStateFlow(VoiceState.IDLE)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
-    
+
     private val _response = MutableSharedFlow<VoiceResponse>(extraBufferCapacity = 5)
     val response: SharedFlow<VoiceResponse> = _response.asSharedFlow()
-    
+
     private var isInitialized = false
-    private var isListening = false
     private var isInCommandMode = false
-    private var isStartingCommand = false
-    private var isProcessingCommand = false // NEW: prevents double-processing
-    private var startRequested = false
+    private var isProcessingCommand = false
 
-    private val hotwordRegex = Regex("\\b(h(i|ey)|hai)\\s*(to(r|ri|ry|re)|tar)\\b", RegexOption.IGNORE_CASE)
+    fun isActive(): Boolean = _voiceState.value != VoiceState.IDLE
 
-    fun isActive(): Boolean = isListening
-    
+    // ──────────────────────────────────────────────────────────────
+    // INITIALIZATION
+    // ──────────────────────────────────────────────────────────────
+
     suspend fun initialize() {
         try {
             Log.d(TAG, "Initializing Tori Voice Assistant...")
-            
-            // Initialize components — DO NOT initialize WakeWordDetector (mic conflict)
+
+            // Initialize components
             speechRecognizer.initialize()
             geminiProcessor.initialize()
             textToSpeech.initialize()
-            
-            // Hotword detection via SpeechRecognizer partial results
-            speechRecognizer.partialText
-                .onEach { partial ->
-                    if (isInCommandMode || isStartingCommand || isProcessingCommand) return@onEach
-                    if (isHotword(partial)) {
-                        Log.d(TAG, "Hotword detected from partial: $partial")
+            wakeWordDetector.initialize()
+
+            // Subscribe to speech results (only fires in command mode)
+            speechRecognizer.speechResult
+                .onEach { result ->
+                    Log.d(TAG, "Speech result: '${result.text}' (confidence: ${result.confidence})")
+                    onSpeechRecognized(result)
+                }
+                .launchIn(scope)
+
+            // Subscribe to speech errors
+            speechRecognizer.speechError
+                .onEach { error ->
+                    Log.e(TAG, "Speech error: $error")
+                    if (isInCommandMode) {
+                        handleError("I didn't catch that. Tap the Tori button to try again.")
+                    }
+                }
+                .launchIn(scope)
+
+            // Subscribe to wake word detections (from WakeWordDetector/AudioRecord — silent)
+            wakeWordDetector.wakeWordDetected
+                .onEach { confidence ->
+                    Log.d(TAG, "Wake word detected! (confidence: $confidence)")
+                    if (!isInCommandMode && !isProcessingCommand) {
                         onWakeWordDetected()
                     }
                 }
                 .launchIn(scope)
-            
-            // Set up speech recognition results
-            // CRITICAL: Only process results when we are actually in command mode.
-            // Without this guard, hotword-mode results that leak to speechResult
-            // would be processed as commands.
-            speechRecognizer.speechResult
-                .onEach { result ->
-                    Log.d(TAG, "Speech result received: '${result.text}' (confidence: ${result.confidence})")
-                    Log.d(TAG, "State: commandMode=$isInCommandMode, startingCommand=$isStartingCommand, processing=$isProcessingCommand")
-                    if (!isInCommandMode && !isStartingCommand) {
-                        Log.w(TAG, "Ignoring speech result — not in command mode")
-                        return@onEach
-                    }
-                    onSpeechRecognized(result)
-                }
-                .launchIn(scope)
-            
-            // Set up speech recognition errors
-            speechRecognizer.speechError
-                .onEach { error ->
-                    Log.e(TAG, "Speech recognition error: $error (commandMode=$isInCommandMode, startingCommand=$isStartingCommand)")
-                    if (isInCommandMode || isStartingCommand) {
-                        handleError(error)
-                    } else {
-                        // Hotword mode: don't speak errors; SpeechRecognizer will auto-restart.
-                        _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
-                    }
-                }
-                .launchIn(scope)
-            
+
             isInitialized = true
             _voiceState.value = VoiceState.IDLE
-
-            if (startRequested) {
-                startRequested = false
-                startListening()
-            }
-            
             Log.d(TAG, "Tori Voice Assistant initialized successfully")
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Voice Assistant", e)
             throw e
         }
     }
-    
-    fun startListening() {
 
+    // ──────────────────────────────────────────────────────────────
+    // WAKE WORD DETECTION (silent background listening)
+    // ──────────────────────────────────────────────────────────────
+
+    /**
+     * Start silent wake word detection using AudioRecord.
+     * No beeps, no visible indication to user.
+     * This is the default background state.
+     */
+    fun startWakeWordDetection() {
         if (!isInitialized) {
-            Log.w(TAG, "Voice Assistant not initialized — deferring start")
-            startRequested = true
+            Log.w(TAG, "Not initialized — cannot start wake word detection")
             return
         }
-        
-        if (isListening) {
-            Log.d(TAG, "Already listening")
+
+        if (isInCommandMode || isProcessingCommand) {
+            Log.d(TAG, "In command/processing mode — skipping wake word start")
             return
         }
-        
-        Log.d(TAG, "Starting hotword listening...")
-        isInCommandMode = false
-        isStartingCommand = false
-        isProcessingCommand = false
-        speechRecognizer.startHotwordListening()
-        isListening = true
+
+        Log.d(TAG, "Starting silent wake word detection (AudioRecord)...")
         _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
-    }
-    
-    fun stopListening() {
-        Log.d(TAG, "Stopping voice assistant...")
-        speechRecognizer.cancel()
-        isListening = false
-        isInCommandMode = false
-        isStartingCommand = false
-        isProcessingCommand = false
-        startRequested = false
-        _voiceState.value = VoiceState.IDLE
+        wakeWordDetector.startListening()
     }
 
+    /**
+     * Stop wake word detection.
+     */
+    fun stopWakeWordDetection() {
+        Log.d(TAG, "Stopping wake word detection...")
+        wakeWordDetector.stopListening()
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // COMMAND MODE (triggered by wake word or button press)
+    // ──────────────────────────────────────────────────────────────
+
+    /**
+     * Called when wake word is detected by WakeWordDetector.
+     * Stops wake word detection, provides audio feedback, starts command listening.
+     */
+    private suspend fun onWakeWordDetected() {
+        if (isInCommandMode || isProcessingCommand) {
+            Log.d(TAG, "Ignoring wake word — already in command/processing mode")
+            return
+        }
+
+        Log.d(TAG, "Wake word activated — entering command mode")
+        isInCommandMode = true
+        _voiceState.value = VoiceState.WAKE_WORD_DETECTED
+
+        // Stop wake word detection (release AudioRecord/mic)
+        wakeWordDetector.stopListening()
+
+        // Audio feedback
+        textToSpeech.speak("Hello Buddy, How can I help you?", priority = TTSPriority.HIGH)
+        waitForTTSCompletion(maxWaitMs = 4000)
+        delay(300)
+
+        // Start command listening (SpeechRecognizer — will play system beep)
+        _voiceState.value = VoiceState.LISTENING_FOR_COMMAND
+        Log.d(TAG, "Starting SpeechRecognizer for command...")
+        speechRecognizer.startCommandListening()
+
+        _response.emit(VoiceResponse(
+            type = ResponseType.WAKE_WORD_ACKNOWLEDGED,
+            message = "Listening for your command...",
+            shouldSpeak = false
+        ))
+    }
+
+    /**
+     * Called when user manually triggers voice assistant (button press).
+     * Stops wake word detection, provides audio feedback, starts command listening.
+     */
     fun startCommandListening() {
-
         if (!isInitialized) {
             Log.w(TAG, "Voice Assistant not initialized")
             return
         }
 
-        if (isInCommandMode || isStartingCommand || isProcessingCommand) {
-            Log.d(TAG, "Already in command/processing mode — ignoring duplicate trigger")
+        if (isInCommandMode || isProcessingCommand) {
+            Log.d(TAG, "Already in command/processing mode — ignoring")
             return
-        }
-
-        if (!isListening) {
-            isListening = true
         }
 
         scope.launch {
-            isStartingCommand = true
+            Log.d(TAG, "Manual trigger — entering command mode")
+            isInCommandMode = true
             _voiceState.value = VoiceState.WAKE_WORD_DETECTED
 
-            try {
-                // Cancel hotword SILENTLY — suppress the ERROR_CLIENT that Android
-                // fires when cancel() is called, preventing it from triggering
-                // unwanted hotword restarts that interfere with command mode.
-                speechRecognizer.cancelSilently()
+            // Stop wake word detection (release AudioRecord/mic)
+            wakeWordDetector.stopListening()
 
-                isInCommandMode = true
-                isProcessingCommand = false
-
-                // Provide audio feedback
-                textToSpeech.speak("Yes, I'm listening", priority = TTSPriority.HIGH)
-
-                // Wait for TTS to finish speaking before starting command listening
-                // This prevents the mic from capturing TTS output as user speech
-                waitForTTSCompletion(maxWaitMs = 3000)
-
-                // Small extra delay to let audio hardware fully release
-                delay(300)
-
-                _voiceState.value = VoiceState.LISTENING_FOR_COMMAND
-                Log.d(TAG, "Starting SpeechRecognizer in command mode (manual trigger)...")
-                speechRecognizer.startCommandListening()
-
-                _response.emit(
-                    VoiceResponse(
-                        type = ResponseType.WAKE_WORD_ACKNOWLEDGED,
-                        message = "Listening for your command...",
-                        shouldSpeak = false
-                    )
-                )
-            } finally {
-                isStartingCommand = false
-            }
-        }
-    }
-    
-    private suspend fun onWakeWordDetected() {
-        if (isStartingCommand || isInCommandMode || isProcessingCommand) {
-            Log.d(TAG, "Ignoring wake word — already in command/processing mode")
-            return
-        }
-        isStartingCommand = true
-        _voiceState.value = VoiceState.WAKE_WORD_DETECTED
-
-        try {
-            // Cancel hotword SILENTLY before starting command capture
-            speechRecognizer.cancelSilently()
-
-            isInCommandMode = true
-
-            // Provide audio feedback
-            textToSpeech.speak("Hello Buddy, How can I help you?", priority = TTSPriority.HIGH)
-
-            // Wait for TTS to finish before starting command listening
-            waitForTTSCompletion(maxWaitMs = 4000)
-
-            // Extra delay to let audio hardware release after TTS
+            // Audio feedback
+            textToSpeech.speak("Yes, I'm listening", priority = TTSPriority.HIGH)
+            waitForTTSCompletion(maxWaitMs = 3000)
             delay(300)
 
+            // Start command listening (SpeechRecognizer — will play system beep)
             _voiceState.value = VoiceState.LISTENING_FOR_COMMAND
-            Log.d(TAG, "Starting SpeechRecognizer in command mode (wake word)...")
+            Log.d(TAG, "Starting SpeechRecognizer for command (manual trigger)...")
             speechRecognizer.startCommandListening()
 
-            // Emit response for UI
             _response.emit(VoiceResponse(
                 type = ResponseType.WAKE_WORD_ACKNOWLEDGED,
                 message = "Listening for your command...",
                 shouldSpeak = false
             ))
-        } finally {
-            // CRITICAL: Always reset isStartingCommand to prevent deadlocks
-            isStartingCommand = false
         }
     }
-    
+
+    // ──────────────────────────────────────────────────────────────
+    // SPEECH PROCESSING
+    // ──────────────────────────────────────────────────────────────
+
     private suspend fun onSpeechRecognized(result: SpeechResult) {
         if (result.text.isBlank()) {
             Log.w(TAG, "Empty speech result")
-            handleError("I didn't hear anything. Could you try again?")
+            handleError("I didn't hear anything. Tap the Tori button to try again.")
             return
         }
 
-        // Guard against double-processing
         if (isProcessingCommand) {
-            Log.w(TAG, "Already processing a command — ignoring duplicate result: '${result.text}'")
+            Log.w(TAG, "Already processing — ignoring: '${result.text}'")
             return
         }
 
         val userText = result.text.trim()
-        
         Log.d(TAG, "Processing speech: '$userText'")
         isProcessingCommand = true
         _voiceState.value = VoiceState.PROCESSING
 
         try {
-            // Fast local command handling before Gemini
+            // Fast local command handling
             val localAction = parseLocalCommand(userText)
             if (localAction != null) {
                 val localMessage = localAction["message"] as? String ?: "Okay"
@@ -279,44 +249,32 @@ class VoiceAssistant(
                 _voiceState.value = VoiceState.SPEAKING
                 textToSpeech.speak(localMessage, priority = TTSPriority.NORMAL)
 
-                _response.emit(
-                    VoiceResponse(
-                        type = ResponseType.COMMAND_RESPONSE,
-                        message = localMessage,
-                        shouldSpeak = true,
-                        data = localAction + mapOf("rawCommand" to userText)
-                    )
-                )
+                _response.emit(VoiceResponse(
+                    type = ResponseType.COMMAND_RESPONSE,
+                    message = localMessage,
+                    shouldSpeak = true,
+                    data = localAction + mapOf("rawCommand" to userText)
+                ))
 
-                // Wait for TTS to finish before returning to hotword listening
                 waitForTTSCompletion(maxWaitMs = 5000)
-
-                returnToHotwordListening()
+                returnToIdle()
                 return
             }
 
-            // Add to conversation context
-            contextManager.addUserInput(userText)
-
             // Process with Gemini AI
+            contextManager.addUserInput(userText)
             Log.d(TAG, "Sending to Gemini: '$userText'")
             val geminiResponse = geminiProcessor.processCommand(
                 userInput = userText,
                 context = contextManager.getContext()
             )
-            
             Log.d(TAG, "Gemini response: '${geminiResponse.message}'")
-            
-            // Add AI response to context
             contextManager.addAssistantResponse(geminiResponse.message)
-            
-            // Set speaking state
-            _voiceState.value = VoiceState.SPEAKING
-            
+
             // Speak the response
+            _voiceState.value = VoiceState.SPEAKING
             textToSpeech.speak(geminiResponse.message, priority = TTSPriority.NORMAL)
-            
-            // Emit response for UI
+
             _response.emit(VoiceResponse(
                 type = ResponseType.COMMAND_RESPONSE,
                 message = geminiResponse.message,
@@ -324,83 +282,86 @@ class VoiceAssistant(
                 data = geminiResponse.data + mapOf("rawCommand" to userText)
             ))
 
-            // Wait for TTS to finish before returning to wake word listening
             waitForTTSCompletion(maxWaitMs = 15000)
-
-            returnToHotwordListening()
+            returnToIdle()
 
         } catch (e: Exception) {
             Log.e(TAG, "Error processing speech", e)
-            handleError("Sorry, I'm having trouble processing that. Could you try again?")
+            handleError("Sorry, I'm having trouble processing that. Please try again.")
         }
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // STATE MANAGEMENT
+    // ──────────────────────────────────────────────────────────────
+
     /**
-     * Cleanly returns to hotword listening mode, resetting all flags.
+     * Return to idle state and restart silent wake word detection.
      */
-    private fun returnToHotwordListening() {
-        Log.d(TAG, "Returning to hotword listening mode")
-        _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
+    private fun returnToIdle() {
+        Log.d(TAG, "Returning to idle — restarting wake word detection")
+        speechRecognizer.cancelSilently()
         isInCommandMode = false
-        isStartingCommand = false
         isProcessingCommand = false
-        speechRecognizer.startHotwordListening()
+        _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
+        wakeWordDetector.startListening()
     }
-    
+
     private suspend fun handleError(message: String) {
         isProcessingCommand = false
+        isInCommandMode = false
+
+        _voiceState.value = VoiceState.ERROR
         textToSpeech.speak(message, priority = TTSPriority.HIGH)
-        
+
         _response.emit(VoiceResponse(
             type = ResponseType.ERROR,
             message = message,
             shouldSpeak = true
         ))
-        
-        // Wait for error TTS to finish
+
         waitForTTSCompletion(maxWaitMs = 5000)
 
-        // Reset flags and return to listening for wake word
-        isInCommandMode = false
-        isStartingCommand = false
+        // Return to silent wake word detection
         _voiceState.value = VoiceState.LISTENING_FOR_WAKE_WORD
-        speechRecognizer.startHotwordListening()
+        speechRecognizer.cancelSilently()
+        wakeWordDetector.startListening()
     }
 
+    /**
+     * Stop everything — called when activity stops.
+     */
+    fun stopAll() {
+        Log.d(TAG, "Stopping all voice systems...")
+        speechRecognizer.cancelSilently()
+        wakeWordDetector.stopListening()
+        isInCommandMode = false
+        isProcessingCommand = false
+        _voiceState.value = VoiceState.IDLE
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // UTILITIES
+    // ──────────────────────────────────────────────────────────────
 
     /**
      * Waits until TTS is no longer speaking, up to maxWaitMs.
-     * Uses a simple reliable polling approach with a generous initial delay
-     * to let the TTS engine actually start before checking isSpeaking().
      */
     private suspend fun waitForTTSCompletion(maxWaitMs: Long) {
         val startTime = System.currentTimeMillis()
-        // Initial delay to let TTS engine start — isSpeaking() returns false
-        // until the utterance actually begins playback
+        // Initial delay to let TTS engine start playing
         delay(800)
-        
-        // Poll speakingState (backed by UtteranceProgressListener) + isSpeaking()
+
+        // Poll until TTS finishes
         while ((System.currentTimeMillis() - startTime) < maxWaitMs) {
             val stateFlowSpeaking = textToSpeech.speakingState.value
             val apiSpeaking = textToSpeech.isSpeaking()
-            if (!stateFlowSpeaking && !apiSpeaking) {
-                break
-            }
+            if (!stateFlowSpeaking && !apiSpeaking) break
             delay(150)
         }
-        
-        // Extra buffer to let audio hardware fully release speaker/mic
+
+        // Buffer for audio hardware to release
         delay(400)
-    }
-
-    private fun isHotword(text: String): Boolean {
-        val normalized = text
-            .lowercase()
-            .replace(Regex("[^a-z ]"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-
-        return hotwordRegex.containsMatchIn(normalized)
     }
 
     private fun parseLocalCommand(text: String): Map<String, Any>? {
@@ -408,23 +369,19 @@ class VoiceAssistant(
 
         return when {
             lower.contains("settings") -> mapOf(
-                "action" to "OPEN_SCREEN",
-                "screen" to "SETTINGS",
+                "action" to "OPEN_SCREEN", "screen" to "SETTINGS",
                 "message" to "Opening settings"
             )
             lower.contains("contacts") -> mapOf(
-                "action" to "OPEN_SCREEN",
-                "screen" to "CONTACTS",
+                "action" to "OPEN_SCREEN", "screen" to "CONTACTS",
                 "message" to "Opening contacts"
             )
             lower.contains("trip log") || lower.contains("triplog") || lower.contains("history") -> mapOf(
-                "action" to "OPEN_SCREEN",
-                "screen" to "TRIP_LOG",
+                "action" to "OPEN_SCREEN", "screen" to "TRIP_LOG",
                 "message" to "Opening trip log"
             )
             lower.contains("hud") -> mapOf(
-                "action" to "OPEN_SCREEN",
-                "screen" to "HUD",
+                "action" to "OPEN_SCREEN", "screen" to "HUD",
                 "message" to "Opening HUD mode"
             )
             lower.contains("start monitoring") || lower.contains("drive mode") || lower.contains("start drive") -> mapOf(
@@ -441,32 +398,25 @@ class VoiceAssistant(
             )
             lower.startsWith("navigate to ") -> {
                 val dest = text.substringAfter("navigate to ").trim()
-                mapOf(
-                    "action" to "NAVIGATE",
-                    "query" to dest,
-                    "message" to "Starting navigation"
-                )
+                mapOf("action" to "NAVIGATE", "query" to dest, "message" to "Starting navigation")
             }
             lower.startsWith("take me to ") -> {
                 val dest = text.substringAfter("take me to ").trim()
-                mapOf(
-                    "action" to "NAVIGATE",
-                    "query" to dest,
-                    "message" to "Starting navigation"
-                )
+                mapOf("action" to "NAVIGATE", "query" to dest, "message" to "Starting navigation")
             }
             else -> null
         }
     }
-    
+
     fun release() {
         Log.d(TAG, "Releasing Voice Assistant...")
         scope.cancel()
+        wakeWordDetector.release()
         speechRecognizer.release()
         textToSpeech.release()
         isInitialized = false
     }
-    
+
     companion object {
         private const val TAG = "VoiceAssistant"
     }

@@ -10,38 +10,31 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import kotlinx.coroutines.flow.*
-import java.util.*
 
 /**
- * Speech recognizer for Tori voice assistant
- * Uses Android's built-in speech recognition
+ * Speech recognizer for Tori voice assistant — COMMAND MODE ONLY.
  *
- * FIX v4 NOTES:
- * - Added suppressErrors flag to ignore ERROR_CLIENT from intentional cancel() calls.
- *   On Android, calling SpeechRecognizer.cancel() triggers onError(ERROR_CLIENT),
- *   which was being mishandled as a real error and causing hotword restarts
- *   that interfered with the command mode transition.
- * - Added cancelSilently() method for use before mode transitions.
- * - Used named Runnable for hotword restart so it can be cancelled during mode switches.
- * - Explicit "en-IN" locale to fix Hindi-locale devices returning empty results.
- * - Retry logic for both onError AND empty onResults in command mode.
+ * This recognizer is ONLY used for capturing user commands after activation.
+ * It is NOT used for wake word / hotword detection (that uses WakeWordDetector).
+ *
+ * SpeechRecognizer plays a system beep when it starts, so it must ONLY be started
+ * when the user has explicitly triggered voice input (button press or wake word).
  */
 class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
-    private var mode: Mode = Mode.COMMAND
 
-    // Retry tracking for command mode (covers both onError AND empty onResults)
+    // Retry tracking for empty results / transient errors
     private var commandRetryCount = 0
-    private val maxCommandRetries = 3
+    private val maxCommandRetries = 2
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
      * When true, errors from onError() are suppressed.
-     * This is set before intentional cancel() calls to prevent ERROR_CLIENT
-     * from being treated as a real error and triggering unwanted restarts.
+     * Set before intentional cancel() calls to prevent ERROR_CLIENT
+     * from being treated as a real error.
      */
     private var suppressErrors = false
 
@@ -54,34 +47,15 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
     private val _speechError = MutableSharedFlow<String>(extraBufferCapacity = 5)
     val speechError: SharedFlow<String> = _speechError.asSharedFlow()
 
-    /**
-     * Named runnable for hotword restart so we can cancel it
-     * when switching to command mode.
-     */
-    private val hotwordRestartRunnable = Runnable {
-        if (mode == Mode.HOTWORD && !isListening && !suppressErrors) {
-            Log.d(TAG, "Restarting hotword listening...")
-            startHotwordListening()
-        } else {
-            Log.d(TAG, "Skipping hotword restart (mode=$mode, listening=$isListening, suppressed=$suppressErrors)")
-        }
-    }
-
     fun initialize() {
         Log.d(TAG, "Initializing speech recognizer...")
-
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             throw IllegalStateException("Speech recognition not available on this device")
         }
-
         createRecognizer()
         Log.d(TAG, "Speech recognizer initialized")
     }
 
-    /**
-     * Creates (or recreates) the underlying SpeechRecognizer instance.
-     * Must be called on the main thread.
-     */
     private fun createRecognizer() {
         try {
             speechRecognizer?.destroy()
@@ -90,32 +64,16 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(this@ToriSpeechRecognizer)
         }
-        Log.d(TAG, "SpeechRecognizer instance created/recreated")
-    }
-
-    fun startHotwordListening() {
-        mode = Mode.HOTWORD
-        commandRetryCount = 0
-        suppressErrors = false
-        startListeningInternal(
-            partialResults = true,
-            completeSilenceMs = 10_000,
-            possiblyCompleteSilenceMs = 10_000
-        )
+        Log.d(TAG, "SpeechRecognizer instance created")
     }
 
     /**
-     * Cancel current listening silently — suppresses the ERROR_CLIENT
-     * that Android fires when SpeechRecognizer.cancel() is called.
-     *
-     * Use this before mode transitions (hotword → command) to prevent
-     * the error from triggering unwanted hotword restarts.
+     * Cancel and suppress the resulting ERROR_CLIENT callback.
+     * Use before mode transitions to prevent error side effects.
      */
     fun cancelSilently() {
-        Log.d(TAG, "Silent cancel — suppressing errors from this cancel")
+        Log.d(TAG, "Silent cancel — suppressing errors")
         suppressErrors = true
-        // Remove any pending hotword restart that might interfere
-        mainHandler.removeCallbacks(hotwordRestartRunnable)
         try {
             speechRecognizer?.cancel()
         } catch (_: Exception) {}
@@ -123,167 +81,97 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
     }
 
     /**
-     * Start command listening.
-     * Cancel + delay + start. Suppress errors from the cancel.
-     * Recreate only used as fallback on retry #2+.
+     * Start listening for user commands.
+     * This will play a system beep (normal SpeechRecognizer behavior).
      */
     fun startCommandListening() {
-        // Suppress errors from any pending callbacks or the cancel below
-        suppressErrors = true
-        mode = Mode.COMMAND
+        suppressErrors = false
         commandRetryCount = 0
 
-        // Remove any pending hotword restart callbacks
-        mainHandler.removeCallbacks(hotwordRestartRunnable)
+        Log.d(TAG, "Starting command listening...")
 
-        Log.d(TAG, "Starting command listening (cancel + restart)")
-
+        // Cancel any prior session without error cascade
         try {
             speechRecognizer?.cancel()
         } catch (_: Exception) {}
         isListening = false
 
-        // Delay to let mic/audio hardware settle, then start
+        // Short delay for audio hardware to settle, then start
         mainHandler.postDelayed({
-            suppressErrors = false  // Accept errors from the NEW session
-            Log.d(TAG, "Post-cancel delay complete, starting command recognition")
-            startListeningInternal(
-                partialResults = true,
-                completeSilenceMs = 8000,
-                possiblyCompleteSilenceMs = 8000
-            )
-        }, 350)
+            suppressErrors = false
+            startListeningInternal()
+        }, 200)
     }
 
-    /**
-     * Retry command listening with optional recognizer recreate.
-     * First retry: simple restart. Second+ retry: full recreate.
-     */
     private fun retryCommandListening() {
         commandRetryCount++
         Log.d(TAG, "Retrying command listening (attempt $commandRetryCount/$maxCommandRetries)")
 
-        // Remove any pending callbacks
-        mainHandler.removeCallbacks(hotwordRestartRunnable)
-
         if (commandRetryCount >= 2) {
-            // On second+ retry, do a full recreate
+            // Full recreate on 2nd retry
             Log.d(TAG, "Full recreate on retry #$commandRetryCount")
             mainHandler.post {
                 createRecognizer()
-                mainHandler.postDelayed({
-                    startListeningInternal(
-                        partialResults = true,
-                        completeSilenceMs = 8000,
-                        possiblyCompleteSilenceMs = 8000
-                    )
-                }, 400)
+                mainHandler.postDelayed({ startListeningInternal() }, 400)
             }
         } else {
-            // First retry: just cancel and restart (lightweight)
+            // Simple restart
             try {
                 speechRecognizer?.cancel()
             } catch (_: Exception) {}
             isListening = false
-
-            mainHandler.postDelayed({
-                startListeningInternal(
-                    partialResults = true,
-                    completeSilenceMs = 8000,
-                    possiblyCompleteSilenceMs = 8000
-                )
-            }, 400)
+            mainHandler.postDelayed({ startListeningInternal() }, 300)
         }
     }
 
-    private fun startListeningInternal(
-        partialResults: Boolean,
-        completeSilenceMs: Int,
-        possiblyCompleteSilenceMs: Int
-    ) {
-        // If already listening, cancel first and then restart
+    private fun startListeningInternal() {
         if (isListening) {
-            Log.d(TAG, "Already listening, cancelling before restart")
-            try {
-                speechRecognizer?.cancel()
-            } catch (_: Exception) {}
+            try { speechRecognizer?.cancel() } catch (_: Exception) {}
             isListening = false
         }
 
-        Log.d(TAG, "Starting speech recognition (mode=$mode, retry=$commandRetryCount)...")
+        Log.d(TAG, "Starting speech recognition (retry=$commandRetryCount)...")
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-
-            // Use explicit English locale for speech recognition.
-            // On Indian devices, Locale.getDefault() may return Hindi,
-            // causing the recognizer to fail to match English speech.
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en")
-
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, partialResults)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, completeSilenceMs)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, possiblyCompleteSilenceMs)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000)
-
+            // Use standard English — most reliable across all devices
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
         }
 
         try {
             speechRecognizer?.startListening(intent)
             isListening = true
-            Log.d(TAG, "SpeechRecognizer.startListening() called successfully (mode=$mode)")
+            Log.d(TAG, "SpeechRecognizer.startListening() called successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start speech recognition", e)
             _speechError.tryEmit("Failed to start listening: ${e.message}")
         }
     }
 
-    fun stopListening() {
-        if (!isListening) return
-
-        Log.d(TAG, "Stopping speech recognition...")
-        speechRecognizer?.stopListening()
-        isListening = false
-    }
-
     fun cancel() {
         Log.d(TAG, "Cancel speech recognition...")
-        try {
-            speechRecognizer?.cancel()
-        } catch (_: Exception) {
-        }
+        try { speechRecognizer?.cancel() } catch (_: Exception) {}
         isListening = false
     }
 
-    fun reset() {
-        Log.d(TAG, "Resetting speech recognizer...")
-        cancel()
-        mainHandler.post {
-            createRecognizer()
-        }
-    }
+    // ---- RecognitionListener callbacks ----
 
-    // RecognitionListener implementation
     override fun onReadyForSpeech(params: Bundle?) {
-        Log.d(TAG, "Ready for speech (mode=$mode)")
+        Log.d(TAG, "✓ Ready for speech — speak now")
     }
 
     override fun onBeginningOfSpeech() {
-        Log.d(TAG, "Beginning of speech detected (mode=$mode)")
+        Log.d(TAG, "✓ Beginning of speech detected")
     }
 
-    override fun onRmsChanged(rmsdB: Float) {
-        // Audio level changed
-    }
-
-    override fun onBufferReceived(buffer: ByteArray?) {
-        // Audio buffer received
-    }
+    override fun onRmsChanged(rmsdB: Float) {}
+    override fun onBufferReceived(buffer: ByteArray?) {}
 
     override fun onEndOfSpeech() {
-        Log.d(TAG, "End of speech detected (mode=$mode)")
+        Log.d(TAG, "✓ End of speech detected")
         isListening = false
     }
 
@@ -296,47 +184,36 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
             SpeechRecognizer.ERROR_NETWORK -> "Network error"
             SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-            SpeechRecognizer.ERROR_NO_MATCH -> "No speech input matched"
-            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognition service busy"
+            SpeechRecognizer.ERROR_NO_MATCH -> "No speech matched"
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
             SpeechRecognizer.ERROR_SERVER -> "Server error"
-            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected"
             else -> "Unknown error: $error"
         }
 
-        // CRITICAL FIX: Suppress errors during intentional cancellations.
-        // Android fires ERROR_CLIENT when cancel() is called, and this was
-        // being mishandled as a real error, causing hotword restarts that
-        // interfered with command mode transitions.
         if (suppressErrors) {
-            Log.d(TAG, "Suppressing error during mode transition: $errorMessage (code=$error)")
+            Log.d(TAG, "Suppressing error during cancel: $errorMessage (code=$error)")
             return
         }
 
-        Log.e(TAG, "Speech recognition error: $errorMessage (code=$error, mode=$mode, retry=$commandRetryCount)")
+        Log.e(TAG, "Speech error: $errorMessage (code=$error, retry=$commandRetryCount)")
 
-        // For BUSY or CLIENT errors, recreate the recognizer
+        // Recreate on BUSY or CLIENT errors
         if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_CLIENT) {
-            reset()
+            mainHandler.post { createRecognizer() }
         }
 
-        if (mode == Mode.HOTWORD) {
-            // Hotword mode: silently restart
-            scheduleHotwordRestart()
-        } else {
-            // Command mode: retry for transient errors before giving up
-            val isRetryableError = error == SpeechRecognizer.ERROR_NO_MATCH ||
-                    error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                    error == SpeechRecognizer.ERROR_NETWORK ||
-                    error == SpeechRecognizer.ERROR_SERVER ||
-                    error == SpeechRecognizer.ERROR_AUDIO
+        // Retry transient errors
+        val isRetryable = error == SpeechRecognizer.ERROR_NO_MATCH ||
+                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                error == SpeechRecognizer.ERROR_NETWORK ||
+                error == SpeechRecognizer.ERROR_SERVER ||
+                error == SpeechRecognizer.ERROR_AUDIO
 
-            if (isRetryableError && commandRetryCount < maxCommandRetries) {
-                retryCommandListening()
-            } else {
-                // Exhausted retries or non-retryable error — emit to VoiceAssistant
-                Log.d(TAG, "Command mode error not retryable or retries exhausted, emitting error")
-                _speechError.tryEmit(errorMessage)
-            }
+        if (isRetryable && commandRetryCount < maxCommandRetries) {
+            retryCommandListening()
+        } else {
+            _speechError.tryEmit(errorMessage)
         }
     }
 
@@ -347,44 +224,19 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
         val confidence = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
 
         if (!matches.isNullOrEmpty()) {
-            val recognizedText = matches[0]
-            val confidenceScore = confidence?.get(0) ?: 0.5f
-
-            Log.d(TAG, "Speech recognized (mode=$mode): '$recognizedText' (confidence: $confidenceScore)")
-
-            // Reset retry counter on successful recognition
+            val text = matches[0]
+            val conf = confidence?.get(0) ?: 0.5f
+            Log.d(TAG, "✓ Speech recognized: '$text' (confidence: $conf)")
             commandRetryCount = 0
 
-            if (mode == Mode.HOTWORD) {
-                _partialText.tryEmit(recognizedText)
-                scheduleHotwordRestart()
-                return
-            }
-
-            // COMMAND mode — emit the result for VoiceAssistant to process
-            val emitted = _speechResult.tryEmit(SpeechResult(
-                text = recognizedText,
-                confidence = confidenceScore
-            ))
-            Log.d(TAG, "Command result emitted to flow: $emitted (text='$recognizedText')")
-
-            if (!emitted) {
-                Log.e(TAG, "CRITICAL: Failed to emit speech result — flow buffer full!")
-            }
+            _speechResult.tryEmit(SpeechResult(text = text, confidence = conf))
         } else {
-            Log.w(TAG, "No speech results (mode=$mode, retry=$commandRetryCount)")
+            Log.w(TAG, "Empty speech results (retry=$commandRetryCount)")
 
-            if (mode == Mode.HOTWORD) {
-                scheduleHotwordRestart()
+            if (commandRetryCount < maxCommandRetries) {
+                retryCommandListening()
             } else {
-                // Retry for empty results in command mode
-                if (commandRetryCount < maxCommandRetries) {
-                    Log.d(TAG, "Empty results — retrying command listening")
-                    retryCommandListening()
-                } else {
-                    Log.d(TAG, "Empty results — retries exhausted, emitting error")
-                    _speechError.tryEmit("I couldn't hear you clearly. Please try again.")
-                }
+                _speechError.tryEmit("I couldn't hear you clearly. Please try again.")
             }
         }
     }
@@ -392,35 +244,22 @@ class ToriSpeechRecognizer(private val context: Context) : RecognitionListener {
     override fun onPartialResults(partialResults: Bundle?) {
         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         if (!matches.isNullOrEmpty()) {
-            Log.d(TAG, "Partial result (mode=$mode): ${matches[0]}")
+            Log.d(TAG, "Partial: ${matches[0]}")
             _partialText.tryEmit(matches[0])
         }
     }
 
-    private fun scheduleHotwordRestart() {
-        mainHandler.removeCallbacks(hotwordRestartRunnable)
-        mainHandler.postDelayed(hotwordRestartRunnable, 350)
-    }
-
-    override fun onEvent(eventType: Int, params: Bundle?) {
-        // Handle speech recognition events
-    }
+    override fun onEvent(eventType: Int, params: Bundle?) {}
 
     fun release() {
         Log.d(TAG, "Releasing speech recognizer...")
-        mainHandler.removeCallbacks(hotwordRestartRunnable)
-        stopListening()
+        cancel()
         speechRecognizer?.destroy()
         speechRecognizer = null
     }
-    
+
     companion object {
         private const val TAG = "ToriSpeechRecognizer"
-    }
-
-    enum class Mode {
-        HOTWORD,
-        COMMAND
     }
 }
 

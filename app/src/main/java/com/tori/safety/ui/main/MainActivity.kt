@@ -50,14 +50,16 @@ class MainActivity : ToriBaseActivity() {
 
     override fun onStart() {
         super.onStart()
+        // Restart silent wake word detection when activity resumes
         if (::voiceAssistant.isInitialized && hasAudioPermission()) {
-            voiceAssistant.startListening()
+            voiceAssistant.startWakeWordDetection()
         }
     }
 
     override fun onStop() {
+        // Stop all voice systems when activity goes to background
         if (::voiceAssistant.isInitialized) {
-            voiceAssistant.stopListening()
+            voiceAssistant.stopAll()
         }
         super.onStop()
     }
@@ -122,10 +124,10 @@ class MainActivity : ToriBaseActivity() {
         lifecycleScope.launch {
             try {
                 voiceAssistant.initialize()
-                voiceAssistant.startListening()
-                Log.d(TAG, "Voice assistant initialized and listening")
+                // Start SILENT wake word detection — no beeps, no visible activation
+                voiceAssistant.startWakeWordDetection()
+                Log.d(TAG, "Voice assistant initialized — wake word detection active (silent)")
                 
-                // Update UI to show Tori is ready
                 binding.tvVoiceStatus.text = "Say 'Hey Tor'"
                 
             } catch (e: Exception) {
@@ -152,12 +154,12 @@ class MainActivity : ToriBaseActivity() {
         
         val statusText = when (state) {
             VoiceState.IDLE -> "Tori"
-            VoiceState.LISTENING_FOR_WAKE_WORD -> "Listening..."
+            VoiceState.LISTENING_FOR_WAKE_WORD -> "Say 'Hey Tor'"
             VoiceState.WAKE_WORD_DETECTED -> "Activated!"
             VoiceState.LISTENING_FOR_COMMAND -> "Speak now"
             VoiceState.PROCESSING -> "Thinking..."
             VoiceState.SPEAKING -> "Speaking"
-            VoiceState.ERROR -> "Error"
+            VoiceState.ERROR -> "Tap to retry"
         }
         
         binding.tvVoiceStatus.text = statusText
